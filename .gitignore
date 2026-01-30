@@ -1,0 +1,42 @@
+# Build artifacts
+bin/
+teraglest
+test_world_from_map
+phase23demo
+*.test
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Configuration files with secrets
+config.local.toml
+.env
+
+# Test data directories
+test-data/
+/tmp/
+
+# Backup files
+*.backup
+
+# MegaGlest source data (large assets)
+megaglest-source/
+
+# Development tools
+cmd/test_map_parser/
+cmd/phase23demo/
+
+# Claude Code temporary files
+.claude/
