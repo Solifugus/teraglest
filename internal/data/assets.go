@@ -21,6 +21,8 @@ const (
 	AssetTypeG3D     AssetType = "g3d"
 	AssetTypeTexture AssetType = "texture"
 	AssetTypeAudio   AssetType = "audio"
+	AssetTypeMap     AssetType = "map"
+	AssetTypeTileset AssetType = "tileset"
 )
 
 // AssetManager handles loading, caching, and managing all game assets

@@ -29,6 +29,7 @@ type World struct {
 	Width        int                             // Map width in tiles
 	Height       int                             // Map height in tiles
 	tileSize     float32                         // Size of each map tile
+	Map          *Map                            // Loaded map data (if created from map)
 
 	// Grid system for positioning and collision detection
 	occupancyGrid [][]bool                      // Track which tiles have units/buildings
@@ -103,6 +104,58 @@ func NewWorld(settings GameSettings, techTree *data.TechTree, assetMgr *data.Ass
 	// Initialize grid system
 	if err := world.initializeGrid(); err != nil {
 		return nil, fmt.Errorf("failed to initialize grid system: %w", err)
+	}
+
+	return world, nil
+}
+
+// NewWorldFromMap creates a new game world instance from a map file
+func NewWorldFromMap(settings GameSettings, techTree *data.TechTree, assetMgr *data.AssetManager, mapName string) (*World, error) {
+	// Create MapManager for loading map data
+	dataRoot := "/home/solifugus/development/teraglest/megaglest-source/data/glest_game" // TODO: make configurable
+	mapManager := NewMapManager(assetMgr, dataRoot)
+
+	// Load map data
+	mapData, err := mapManager.LoadMap(mapName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load map %s: %w", mapName, err)
+	}
+
+	// Validate map
+	issues := mapManager.ValidateMap(mapData)
+	if len(issues) > 0 {
+		return nil, fmt.Errorf("map validation failed: %v", issues)
+	}
+
+	// Create world with map dimensions
+	world := &World{
+		settings:      settings,
+		techTree:      techTree,
+		assetMgr:      assetMgr,
+		players:       make(map[int]*Player),
+		resources:     make(map[int]*ResourceNode),
+		nextEntityID:  1,
+		Width:         mapData.Width,     // From map file
+		Height:        mapData.Height,    // From map file
+		tileSize:      1.0,               // Standard tile size
+		Map:           mapData,           // Store map reference
+		resourceGenerationRate: make(map[string]float32),
+		unitCap:       200,               // Default unit cap per player
+		buildingCap:   50,                // Default building cap per player
+	}
+
+	// Initialize default resource generation rates
+	world.resourceGenerationRate["gold"] = 1.0
+	world.resourceGenerationRate["wood"] = 1.0
+	world.resourceGenerationRate["stone"] = 1.0
+	world.resourceGenerationRate["energy"] = 2.0
+
+	// Initialize ObjectManager
+	world.ObjectManager = NewObjectManager(world)
+
+	// Initialize grid system from map data
+	if err := world.initializeFromMap(mapData); err != nil {
+		return nil, fmt.Errorf("failed to initialize world from map: %w", err)
 	}
 
 	return world, nil
@@ -410,6 +463,215 @@ func (w *World) initializeGrid() error {
 	return nil
 }
 
+// initializeFromMap initializes the world grid system from loaded map data
+func (w *World) initializeFromMap(mapData *Map) error {
+	// First initialize the basic grid arrays
+	if err := w.initializeGrid(); err != nil {
+		return err
+	}
+
+	// Populate terrain data from map
+	for y := 0; y < mapData.Height; y++ {
+		for x := 0; x < mapData.Width; x++ {
+			// Copy height data from map
+			w.heightMap[y][x] = mapData.HeightMap[y][x]
+
+			// Calculate walkability based on terrain objects and surfaces
+			w.walkableGrid[y][x] = w.calculateWalkability(mapData, x, y)
+		}
+	}
+
+	// Initialize player starting positions
+	if err := w.initializeStartPositions(mapData.StartPositions); err != nil {
+		return fmt.Errorf("failed to initialize start positions: %w", err)
+	}
+
+	// Place resource nodes from map data
+	if err := w.placeResourceNodesFromMap(mapData); err != nil {
+		return fmt.Errorf("failed to place resource nodes: %w", err)
+	}
+
+	return nil
+}
+
+// calculateWalkability determines if a tile is walkable based on terrain data
+func (w *World) calculateWalkability(mapData *Map, x, y int) bool {
+	// Check terrain object walkability
+	objectIndex := mapData.ObjectMap[y][x]
+	if objectIndex > 0 && mapData.Tileset != nil {
+		if obj := mapData.Tileset.GetObject(int(objectIndex)); obj != nil {
+			return obj.Walkable
+		}
+	}
+
+	// Check surface walkability (water, cliffs, etc.)
+	surfaceIndex := mapData.SurfaceMap[y][x]
+	height := mapData.HeightMap[y][x]
+
+	return w.isSurfaceWalkable(int(surfaceIndex), height, mapData)
+}
+
+// isSurfaceWalkable determines if a surface type at a given height is walkable
+func (w *World) isSurfaceWalkable(surfaceIndex int, height float32, mapData *Map) bool {
+	// Check water level
+	if height <= mapData.WaterLevel {
+		return false // Water tiles are not walkable by default
+	}
+
+	// Check for steep cliffs (large height differences)
+	if mapData.Version == MapVersionMGM && height >= mapData.CliffLevel {
+		return false // Cliff areas are not walkable
+	}
+
+	// All other surfaces are walkable by default
+	// This could be enhanced with surface-specific walkability rules
+	return true
+}
+
+// initializeStartPositions sets up player starting positions
+func (w *World) initializeStartPositions(startPositions []Vector2i) error {
+	// Store start positions for player initialization
+	// This could be enhanced to validate positions and create starting units
+
+	for i, pos := range startPositions {
+		// Ensure the start position is valid and walkable
+		if !w.Map.IsValidPosition(pos.X, pos.Y) {
+			return fmt.Errorf("start position %d is out of bounds: (%d, %d)", i+1, pos.X, pos.Y)
+		}
+
+		// Mark the area around start positions as occupied temporarily
+		// This prevents resource nodes from spawning too close to start positions
+		for dy := -2; dy <= 2; dy++ {
+			for dx := -2; dx <= 2; dx++ {
+				nx, ny := pos.X+dx, pos.Y+dy
+				if w.Map.IsValidPosition(nx, ny) {
+					// Temporary marking - will be cleared when units are spawned
+					w.occupancyGrid[ny][nx] = true
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// placeResourceNodesFromMap creates resource nodes based on map data
+func (w *World) placeResourceNodesFromMap(mapData *Map) error {
+	resourceNodeCount := 0
+
+	// Scan the map for areas suitable for resource placement
+	// This is a simplified implementation - real maps might have explicit resource placement data
+	for y := 0; y < mapData.Height; y += 8 { // Sample every 8 tiles
+		for x := 0; x < mapData.Width; x += 8 {
+			// Check if this area is suitable for resources
+			if w.isResourceAreaSuitable(x, y, mapData) {
+				// Place a resource node
+				resourceType := w.determineResourceType(x, y, mapData)
+				if resourceType != "" {
+					err := w.placeResourceNode(x, y, resourceType)
+					if err != nil {
+						continue // Skip this position if placement fails
+					}
+					resourceNodeCount++
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Placed %d resource nodes from map data\n", resourceNodeCount)
+	return nil
+}
+
+// isResourceAreaSuitable checks if an area is suitable for resource placement
+func (w *World) isResourceAreaSuitable(x, y int, mapData *Map) bool {
+	// Check if the area is walkable
+	if !w.walkableGrid[y][x] {
+		return false
+	}
+
+	// Check if area is not too close to start positions (already marked as occupied)
+	if w.occupancyGrid[y][x] {
+		return false
+	}
+
+	// Check terrain height (avoid placing resources in water or on cliffs)
+	height := mapData.HeightMap[y][x]
+	if height <= mapData.WaterLevel || height >= mapData.WaterLevel+10 {
+		return false
+	}
+
+	return true
+}
+
+// determineResourceType determines what type of resource to place based on terrain
+func (w *World) determineResourceType(x, y int, mapData *Map) string {
+	// Simple heuristic based on position and terrain
+	// This could be enhanced with more sophisticated logic
+
+	height := mapData.HeightMap[y][x]
+	surfaceIndex := mapData.SurfaceMap[y][x]
+
+	// Higher elevations -> stone
+	if height > mapData.WaterLevel+6 {
+		return "stone"
+	}
+
+	// Forest areas (object index suggests trees) -> wood
+	objectIndex := mapData.ObjectMap[y][x]
+	if objectIndex > 0 && mapData.Tileset != nil {
+		if obj := mapData.Tileset.GetObject(int(objectIndex)); obj != nil && !obj.Walkable {
+			return "wood" // Trees are not walkable, so areas with trees get wood
+		}
+	}
+
+	// Grass surfaces -> gold
+	if MapSurfaceType(surfaceIndex) == SurfaceGrass {
+		return "gold"
+	}
+
+	return "" // No resource for this area
+}
+
+// placeResourceNode creates a resource node at the specified position
+func (w *World) placeResourceNode(x, y int, resourceType string) error {
+	position := Vector3{
+		X: float64(x) * float64(w.tileSize),
+		Y: float64(w.heightMap[y][x]),
+		Z: float64(y) * float64(w.tileSize),
+	}
+
+	// Determine resource amount based on type and map size
+	var amount int
+	switch resourceType {
+	case "gold":
+		amount = 1000 + (w.Width*w.Height)/100 // Scale with map size
+	case "wood":
+		amount = 800 + (w.Width*w.Height)/120
+	case "stone":
+		amount = 1200 + (w.Width*w.Height)/80
+	default:
+		amount = 500
+	}
+
+	// Create the resource node
+	resourceNode := &ResourceNode{
+		ID:           w.nextEntityID,
+		ResourceType: resourceType,
+		Position:     position,
+		Amount:       amount,
+		MaxAmount:    amount,
+		IsDepletable: true,
+	}
+
+	w.nextEntityID++
+	w.resources[resourceNode.ID] = resourceNode
+
+	// Mark the tile as occupied
+	w.occupancyGrid[y][x] = true
+
+	return nil
+}
+
 // IsPositionWalkable checks if a grid position is walkable (not occupied and not blocked)
 func (w *World) IsPositionWalkable(gridPos Vector2i) bool {
 	w.mutex.RLock()
@@ -446,6 +708,23 @@ func (w *World) GetHeight(gridPos Vector2i) float32 {
 	}
 
 	return w.heightMap[gridPos.Y][gridPos.X]
+}
+
+// GetTileSize returns the size of each map tile
+func (w *World) GetTileSize() float32 {
+	return w.tileSize
+}
+
+// GetAllResourceNodes returns all resource nodes in the world
+func (w *World) GetAllResourceNodes() []*ResourceNode {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+
+	nodes := make([]*ResourceNode, 0, len(w.resources))
+	for _, node := range w.resources {
+		nodes = append(nodes, node)
+	}
+	return nodes
 }
 
 // SetHeight sets the terrain height at a grid position
