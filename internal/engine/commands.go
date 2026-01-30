@@ -206,6 +206,62 @@ func (cp *CommandProcessor) validateCommand(unit *GameUnit, command UnitCommand)
 		if command.Target == nil {
 			return fmt.Errorf("build command requires target position")
 		}
+		// Resource validation for building construction
+		if buildingType, ok := command.Parameters["building_type"].(string); ok {
+			cost := cp.getBuildingCost(buildingType, unit.PlayerID)
+			if cost != nil {
+				validator := NewResourceValidator(cp.world)
+				result := validator.ValidateResources(ResourceCheck{
+					PlayerID: unit.PlayerID,
+					Required: cost,
+					Purpose:  fmt.Sprintf("building construction (%s)", buildingType),
+				})
+				if !result.Valid {
+					return fmt.Errorf("insufficient resources for building: %s", result.Error)
+				}
+			}
+
+			// Note: Buildings don't usually consume population, but validation available if needed
+		}
+	case CommandProduce:
+		// Resource validation for unit production
+		if unitType, ok := command.Parameters["unit_type"].(string); ok {
+			cost := cp.getUnitCost(unitType, unit.PlayerID)
+			if cost != nil {
+				validator := NewResourceValidator(cp.world)
+				result := validator.ValidateResources(ResourceCheck{
+					PlayerID: unit.PlayerID,
+					Required: cost,
+					Purpose:  fmt.Sprintf("unit production (%s)", unitType),
+				})
+				if !result.Valid {
+					return fmt.Errorf("insufficient resources for unit: %s", result.Error)
+				}
+			}
+
+			// Population validation for unit production
+			popManager := NewPopulationManager(cp.world)
+			canCreate, reason := popManager.CanCreateUnit(unit.PlayerID, unitType)
+			if !canCreate {
+				return fmt.Errorf("cannot create unit: %s", reason)
+			}
+		}
+	case CommandUpgrade:
+		// Resource validation for upgrades
+		if upgradeType, ok := command.Parameters["upgrade_type"].(string); ok {
+			cost := cp.getUpgradeCost(upgradeType, unit.PlayerID)
+			if cost != nil {
+				validator := NewResourceValidator(cp.world)
+				result := validator.ValidateResources(ResourceCheck{
+					PlayerID: unit.PlayerID,
+					Required: cost,
+					Purpose:  fmt.Sprintf("upgrade (%s)", upgradeType),
+				})
+				if !result.Valid {
+					return fmt.Errorf("insufficient resources for upgrade: %s", result.Error)
+				}
+			}
+		}
 	case CommandFollow:
 		if command.TargetUnit == nil {
 			return fmt.Errorf("follow command requires target unit")
@@ -915,4 +971,67 @@ func (ct CommandType) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+// Resource Cost Helper Methods
+
+// getUnitCost extracts resource cost for creating a unit from AssetManager
+func (cp *CommandProcessor) getUnitCost(unitType string, playerID int) map[string]int {
+	player := cp.world.GetPlayer(playerID)
+	if player == nil || player.FactionData == nil {
+		return nil
+	}
+
+	// Load unit from AssetManager
+	unit, err := cp.world.assetMgr.LoadUnit(player.FactionName, unitType)
+	if err != nil {
+		return nil
+	}
+
+	// Extract resource requirements
+	costs := make(map[string]int)
+	for _, req := range unit.Unit.Parameters.ResourceRequirements {
+		costs[req.Name] = req.Amount
+	}
+
+	return costs
+}
+
+// getBuildingCost extracts resource cost for constructing a building from AssetManager
+func (cp *CommandProcessor) getBuildingCost(buildingType string, playerID int) map[string]int {
+	player := cp.world.GetPlayer(playerID)
+	if player == nil || player.FactionData == nil {
+		return nil
+	}
+
+	// Load building from AssetManager (buildings are also loaded as units in MegaGlest)
+	building, err := cp.world.assetMgr.LoadUnit(player.FactionName, buildingType)
+	if err != nil {
+		return nil
+	}
+
+	// Extract resource requirements
+	costs := make(map[string]int)
+	for _, req := range building.Unit.Parameters.ResourceRequirements {
+		costs[req.Name] = req.Amount
+	}
+
+	return costs
+}
+
+// getUpgradeCost extracts resource cost for an upgrade (placeholder implementation)
+func (cp *CommandProcessor) getUpgradeCost(upgradeType string, playerID int) map[string]int {
+	// TODO: Implement upgrade cost extraction from AssetManager
+	// For now, return basic costs for common upgrades
+	upgradeCosts := map[string]map[string]int{
+		"weapon_upgrade": {"gold": 150, "wood": 100},
+		"armor_upgrade":  {"gold": 200, "stone": 150},
+		"speed_upgrade":  {"gold": 100, "wood": 50},
+	}
+
+	if cost, exists := upgradeCosts[upgradeType]; exists {
+		return cost
+	}
+
+	return nil
 }

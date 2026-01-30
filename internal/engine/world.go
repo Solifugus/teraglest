@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -58,6 +59,7 @@ type Player struct {
 	UnitsLost       int                          // Total units lost
 	BuildingsBuilt  int                          // Total buildings constructed
 	ResourcesGathered map[string]int             // Total resources gathered
+	ResourcesSpent    map[string]int             // Total resources spent
 
 	// Faction data
 	FactionData  *data.FactionDefinition         // Loaded faction definition
@@ -335,6 +337,7 @@ func (w *World) createPlayer(playerID int, factionName string, isAI bool) error 
 		IsActive:    true,
 		Resources:   make(map[string]int),
 		ResourcesGathered: make(map[string]int),
+		ResourcesSpent: make(map[string]int),
 		FactionData: factionData,
 	}
 
@@ -342,6 +345,7 @@ func (w *World) createPlayer(playerID int, factionName string, isAI bool) error 
 	for _, startingRes := range factionData.Faction.StartingResources {
 		player.Resources[startingRes.Name] = startingRes.Amount
 		player.ResourcesGathered[startingRes.Name] = 0
+		player.ResourcesSpent[startingRes.Name] = 0
 	}
 
 	w.players[playerID] = player
@@ -399,31 +403,310 @@ func (w *World) generateResourceNodes() {
 }
 
 
-// updatePlayer updates player-specific state
+// updatePlayer updates player-specific state with enhanced resource management
 func (w *World) updatePlayer(player *Player, deltaTime time.Duration) {
-	// Resource generation from buildings
+	// Enhanced resource generation from buildings
 	playerBuildings := w.ObjectManager.GetBuildingsForPlayer(player.ID)
+	generatedResources := make(map[string]int)
+
 	for _, building := range playerBuildings {
-		if building.IsBuilt {
-			// Simple resource generation (placeholder)
-			// Real implementation would check building type and generate appropriate resources
-			for resourceType, rate := range w.resourceGenerationRate {
-				if rate > 0 {
-					generated := int(rate * float32(deltaTime.Seconds()) * w.settings.ResourceMultiplier)
-					if generated > 0 {
-						player.Resources[resourceType] += generated
-						player.ResourcesGathered[resourceType] += generated
-					}
+		if building.IsBuilt && building.Health > 0 {
+			// Process building-specific resource generation
+			for resourceType, rate := range building.ResourceGeneration {
+				generated := w.calculateResourceGeneration(rate, deltaTime, building)
+				if generated > 0 {
+					generatedResources[resourceType] += generated
 				}
 			}
+
+			// Update last generation time
+			building.LastResourceGen = time.Now()
 		}
 	}
+
+	// Apply generated resources using the new AddResources method
+	if len(generatedResources) > 0 {
+		// Don't use AddResources here to avoid mutex lock since we're already in updatePlayer
+		for resourceType, amount := range generatedResources {
+			player.Resources[resourceType] += amount
+			player.ResourcesGathered[resourceType] += amount
+		}
+
+		// Log generation event
+		w.logResourceTransaction(player.ID, generatedResources, "building_generation", "addition")
+	}
+
+	// Process resource dropoffs from gathering units
+	w.processResourceDropoffs(player)
 }
 
 // processGameMechanics handles global game mechanics
 func (w *World) processGameMechanics(deltaTime time.Duration) {
 	// Check win conditions, handle global events, etc.
 	// Placeholder for future implementation
+}
+
+// Resource Management Methods
+
+// ResourceStatus represents the current resource state for a player
+type ResourceStatus struct {
+	Resources        map[string]int     // Current resource amounts
+	ResourceRates    map[string]float32 // Current generation rates per second
+	ResourcesGathered map[string]int    // Total resources gathered (statistics)
+	ResourcesSpent    map[string]int    // Total resources spent (statistics)
+}
+
+// DeductResources safely deducts resources from a player with validation
+func (w *World) DeductResources(playerID int, cost map[string]int, purpose string) error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	player := w.players[playerID]
+	if player == nil {
+		return fmt.Errorf("player %d not found", playerID)
+	}
+
+	// Validate before deduction using ResourceValidator
+	validator := NewResourceValidator(w)
+	result := validator.ValidateResources(ResourceCheck{
+		PlayerID: playerID,
+		Required: cost,
+		Purpose:  purpose,
+	})
+
+	if !result.Valid {
+		return fmt.Errorf("resource deduction failed: %s", result.Error)
+	}
+
+	// Perform deduction
+	for resourceType, amount := range cost {
+		if amount > 0 { // Only deduct positive amounts
+			player.Resources[resourceType] -= amount
+
+			// Track spending statistics
+			if player.ResourcesSpent == nil {
+				player.ResourcesSpent = make(map[string]int)
+			}
+			player.ResourcesSpent[resourceType] += amount
+		}
+	}
+
+	// Log resource deduction event
+	w.logResourceTransaction(playerID, cost, purpose, "deduction")
+
+	return nil
+}
+
+// AddResources adds resources to a player's pool
+func (w *World) AddResources(playerID int, resources map[string]int, source string) error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	player := w.players[playerID]
+	if player == nil {
+		return fmt.Errorf("player %d not found", playerID)
+	}
+
+	// Add resources
+	for resourceType, amount := range resources {
+		if amount > 0 { // Only add positive amounts
+			player.Resources[resourceType] += amount
+			player.ResourcesGathered[resourceType] += amount
+		}
+	}
+
+	// Log resource addition event
+	w.logResourceTransaction(playerID, resources, source, "addition")
+
+	return nil
+}
+
+// GetResourceStatus returns current resource status for a player
+func (w *World) GetResourceStatus(playerID int) ResourceStatus {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+
+	player := w.players[playerID]
+	if player == nil {
+		return ResourceStatus{}
+	}
+
+	// Calculate current resource generation rates
+	resourceRates := w.calculateResourceRates(playerID)
+
+	status := ResourceStatus{
+		Resources:        make(map[string]int),
+		ResourceRates:    resourceRates,
+		ResourcesGathered: make(map[string]int),
+		ResourcesSpent:    make(map[string]int),
+	}
+
+	// Copy current resources
+	for k, v := range player.Resources {
+		status.Resources[k] = v
+	}
+
+	// Copy gathered statistics
+	for k, v := range player.ResourcesGathered {
+		status.ResourcesGathered[k] = v
+	}
+
+	// Copy spent statistics
+	if player.ResourcesSpent != nil {
+		for k, v := range player.ResourcesSpent {
+			status.ResourcesSpent[k] = v
+		}
+	}
+
+	return status
+}
+
+// calculateResourceRates calculates current resource generation rates per second
+func (w *World) calculateResourceRates(playerID int) map[string]float32 {
+	rates := make(map[string]float32)
+
+	// Get rates from buildings
+	playerBuildings := w.ObjectManager.GetBuildingsForPlayer(playerID)
+	for _, building := range playerBuildings {
+		if building.IsBuilt && building.Health > 0 {
+			for resType, rate := range building.ResourceGeneration {
+				// Apply upgrade multipliers and game settings
+				upgradeMultiplier := 1.0 + (float32(building.UpgradeLevel-1) * 0.2) // 20% per upgrade
+				gameMultiplier := w.settings.ResourceMultiplier
+				effectiveRate := rate * upgradeMultiplier * gameMultiplier
+				rates[resType] += effectiveRate
+			}
+		}
+	}
+
+	// Add gathering rates from active gathering units
+	units := w.ObjectManager.UnitManager.GetUnitsForPlayer(playerID)
+	for _, unit := range units {
+		if unit.State == UnitStateGathering && unit.GatherTarget != nil {
+			resType := unit.GatherTarget.ResourceType
+			if gatherRate, ok := unit.GatherRate[resType]; ok {
+				rates[resType] += gatherRate
+			}
+		}
+	}
+
+	return rates
+}
+
+// calculateResourceGeneration calculates resource generation for a building
+func (w *World) calculateResourceGeneration(baseRate float32, deltaTime time.Duration, building *GameBuilding) int {
+	// Factor in building upgrade level and game settings
+	upgradeMultiplier := 1.0 + (float32(building.UpgradeLevel-1) * 0.2) // 20% per upgrade
+	gameMultiplier := w.settings.ResourceMultiplier
+
+	effectiveRate := baseRate * upgradeMultiplier * gameMultiplier
+	generated := int(effectiveRate * float32(deltaTime.Seconds()))
+
+	return generated
+}
+
+// processResourceDropoffs handles units returning resources to collection points
+func (w *World) processResourceDropoffs(player *Player) {
+	// Get all units for this player
+	units := w.ObjectManager.UnitManager.GetUnitsForPlayer(player.ID)
+
+	for _, unit := range units {
+		// Check if unit has carried resources and is at dropoff point
+		if len(unit.CarriedResources) > 0 && w.isAtDropoffPoint(unit) {
+			// Add carried resources to player pool
+			for resourceType, amount := range unit.CarriedResources {
+				if amount > 0 {
+					player.Resources[resourceType] += amount
+					player.ResourcesGathered[resourceType] += amount
+				}
+			}
+
+			// Clear carried resources
+			unit.CarriedResources = make(map[string]int)
+
+			// Log dropoff event
+			w.logResourceTransaction(player.ID, unit.CarriedResources, "resource_dropoff", "addition")
+		}
+	}
+}
+
+// isAtDropoffPoint checks if a unit is close enough to a dropoff point
+func (w *World) isAtDropoffPoint(unit *GameUnit) bool {
+	// Simple implementation: check if unit is near any building that can accept resources
+	playerBuildings := w.ObjectManager.GetBuildingsForPlayer(unit.PlayerID)
+
+	for _, building := range playerBuildings {
+		if building.IsBuilt && building.Health > 0 {
+			// Check distance to building (simplified: within 2 units)
+			distance := w.CalculateDistance(unit.Position, building.Position)
+			if distance <= 2.0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// logResourceTransaction logs resource transactions for events and statistics
+func (w *World) logResourceTransaction(playerID int, resources map[string]int, source, transactionType string) {
+	// Create resource transaction events for each resource type
+	for resourceType, amount := range resources {
+		if amount > 0 {
+			// Create ResourceEvent data
+			resourceEvent := ResourceEvent{
+				PlayerID:        playerID,
+				ResourceType:    resourceType,
+				Amount:          amount,
+				Source:          source,
+				Timestamp:       time.Now(),
+				TransactionType: transactionType,
+			}
+
+			// Determine event type based on transaction type
+			var eventType GameEventType
+			var message string
+
+			if transactionType == "addition" {
+				eventType = EventTypeResourceGained
+				message = fmt.Sprintf("Player %d gained %d %s from %s", playerID, amount, resourceType, source)
+			} else if transactionType == "deduction" {
+				eventType = EventTypeResourceSpent
+				message = fmt.Sprintf("Player %d spent %d %s for %s", playerID, amount, resourceType, source)
+			} else {
+				continue // Skip unknown transaction types
+			}
+
+			// Create game event
+			gameEvent := GameEvent{
+				Type:      eventType,
+				Timestamp: time.Now(),
+				PlayerID:  playerID,
+				Data:      resourceEvent,
+				Message:   message,
+			}
+
+			// Send event to game event system if available
+			w.sendResourceEvent(gameEvent)
+		}
+	}
+}
+
+// sendResourceEvent sends a resource event to the game's event system
+func (w *World) sendResourceEvent(event GameEvent) {
+	// TODO: This would be connected to the actual game instance's event system
+	// For now, we'll just log it (could be expanded to send to game.eventQueue)
+
+	// Simple logging for development - in production this would send to game.eventQueue
+	// fmt.Printf("[RESOURCE EVENT] %s\n", event.Message)
+}
+
+// CalculateDistance calculates the Euclidean distance between two 3D points
+func (w *World) CalculateDistance(pos1, pos2 Vector3) float64 {
+	dx := pos1.X - pos2.X
+	dy := pos1.Y - pos2.Y
+	dz := pos1.Z - pos2.Z
+	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
 // Grid System Methods
