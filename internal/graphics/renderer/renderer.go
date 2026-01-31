@@ -106,7 +106,7 @@ func NewRenderer(assetMgr *data.AssetManager, title string, width, height int) (
 		log.Printf("Warning: Failed to load advanced shaders: %v", err)
 	}
 
-	// Set up input callbacks
+	// Set up basic input callbacks (can be enhanced later with game input handler)
 	renderer.setupInputCallbacks()
 
 	log.Printf("Renderer initialized: %dx%d", width, height)
@@ -138,6 +138,64 @@ func (r *Renderer) setupInputCallbacks() {
 			}
 		}
 	})
+}
+
+// SetupGameInputCallbacks configures input callbacks for game integration
+func (r *Renderer) SetupGameInputCallbacks(inputHandler interface{}) {
+	window := r.context.GetWindow()
+
+	// Type assertion to check for required methods
+	// This allows us to avoid importing ui package here
+	type InputHandler interface {
+		HandleMouseButton(window *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey)
+		HandleMouseMove(window *glfw.Window, xpos, ypos float64)
+		HandleKeyboard(window *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey)
+	}
+
+	if handler, ok := inputHandler.(InputHandler); ok {
+		// Setup mouse button callback
+		window.SetMouseButtonCallback(func(w *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
+			handler.HandleMouseButton(w, button, action, mods)
+		})
+
+		// Setup mouse movement callback
+		window.SetCursorPosCallback(func(w *glfw.Window, xpos, ypos float64) {
+			handler.HandleMouseMove(w, xpos, ypos)
+		})
+
+		// Setup keyboard callback (enhanced version)
+		window.SetKeyCallback(func(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
+			// Handle basic renderer controls first
+			if action == glfw.Press {
+				switch key {
+				case glfw.KeyEscape:
+					w.SetShouldClose(true)
+					return
+				case glfw.KeyF1:
+					r.wireframe = !r.wireframe
+					if r.wireframe {
+						r.context.EnableWireframe()
+						log.Println("Wireframe mode enabled")
+					} else {
+						r.context.DisableWireframe()
+						log.Println("Wireframe mode disabled")
+					}
+					return
+				case glfw.KeyF2:
+					r.showStats = !r.showStats
+					log.Printf("Stats display: %v", r.showStats)
+					return
+				}
+			}
+
+			// Forward to game input handler
+			handler.HandleKeyboard(w, key, scancode, action, mods)
+		})
+
+		log.Println("Game input callbacks configured")
+	} else {
+		log.Println("Warning: Invalid input handler provided to SetupGameInputCallbacks")
+	}
 }
 
 // ShouldClose returns true if the window should close
