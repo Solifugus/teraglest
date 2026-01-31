@@ -8,13 +8,12 @@ import (
 	"teraglest/internal/graphics/renderer"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
-	"github.com/go-gl/mathgl/mgl32"
 )
 
 // InputHandler manages game input events for unit selection and commands
 type InputHandler struct {
 	world     *engine.World
-	uiManager *UIManager
+	uiManager *SimpleUIManager
 
 	// Mouse state
 	lastMouseX   float64
@@ -43,7 +42,7 @@ type SelectionBox struct {
 }
 
 // NewInputHandler creates a new input handler
-func NewInputHandler(world *engine.World, uiManager *UIManager) *InputHandler {
+func NewInputHandler(world *engine.World, uiManager *SimpleUIManager) *InputHandler {
 	return &InputHandler{
 		world:     world,
 		uiManager: uiManager,
@@ -171,6 +170,13 @@ func (ih *InputHandler) HandleMouseMove(window *glfw.Window, xpos, ypos float64)
 func (ih *InputHandler) HandleKeyboard(window *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 	if action == glfw.Press || action == glfw.Repeat {
 		switch key {
+		case glfw.KeyEscape:
+			// Exit game (handled by main loop via window.SetShouldClose)
+			window.SetShouldClose(true)
+		case glfw.KeyP:
+			// Pause/Resume (this will be handled by main game loop)
+			// For now, just log the key press
+			fmt.Println("Pause key pressed - handled by main game loop")
 		case glfw.KeyA:
 			// Select all units
 			if (mods & glfw.ModControl) != 0 {

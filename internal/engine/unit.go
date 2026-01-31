@@ -229,10 +229,12 @@ func (u *GameUnit) Update(deltaTime time.Duration) {
 // Internal update methods
 
 func (u *GameUnit) processCurrentCommand(deltaTime time.Duration) {
-	if u.CurrentCommand == nil {
-		return
-	}
-	// Command processing logic will be implemented in commands.go
+	// Command processing is now handled centrally by CommandProcessor.Update()
+	// which is called from World.Update(). This method is kept for interface
+	// compatibility but actual command logic is in CommandProcessor.ProcessCommand()
+	//
+	// The CommandProcessor.Update() method iterates through all units and calls
+	// CommandProcessor.ProcessCommand() for units with CurrentCommand != nil
 }
 
 func (u *GameUnit) updateMovement(deltaTime time.Duration) {

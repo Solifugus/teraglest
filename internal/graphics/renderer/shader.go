@@ -210,6 +210,17 @@ func (sm *ShaderManager) SetUniformVec3(shaderName, uniformName string, vector m
 	return nil
 }
 
+// SetUniformVec2 sets a vec2 uniform value
+func (sm *ShaderManager) SetUniformVec2(shaderName, uniformName string, vector mgl32.Vec2) error {
+	location, err := sm.getUniformLocation(shaderName, uniformName)
+	if err != nil {
+		return err
+	}
+
+	gl.Uniform2fv(location, 1, &vector[0])
+	return nil
+}
+
 // SetUniformFloat sets a float uniform value
 func (sm *ShaderManager) SetUniformFloat(shaderName, uniformName string, value float32) error {
 	location, err := sm.getUniformLocation(shaderName, uniformName)
@@ -229,6 +240,21 @@ func (sm *ShaderManager) SetUniformInt(shaderName, uniformName string, value int
 	}
 
 	gl.Uniform1i(location, value)
+	return nil
+}
+
+// SetUniformBool sets a bool uniform value
+func (sm *ShaderManager) SetUniformBool(shaderName, uniformName string, value bool) error {
+	location, err := sm.getUniformLocation(shaderName, uniformName)
+	if err != nil {
+		return err
+	}
+
+	intValue := int32(0)
+	if value {
+		intValue = 1
+	}
+	gl.Uniform1i(location, intValue)
 	return nil
 }
 

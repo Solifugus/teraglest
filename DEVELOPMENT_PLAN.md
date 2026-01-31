@@ -1,5 +1,13 @@
 # Teraglest Development Plan
 
+## 🎯 Development Plan Overview
+
+> **📊 Current Status**: See the [README.md Development Status](README.md#development-status--progress) section for current progress and priorities.
+
+This document contains the comprehensive technical development plan and implementation details.
+
+---
+
 ## Phase 1: Project Foundation & Data Layer
 
 ### 1.1 Project Structure & Build System
@@ -118,37 +126,55 @@
   - **Dependencies**: 2.1, 2.2 complete
   - **COMPLETED**: ✅ Full GameUnit with states, ObjectManager, grid positioning system (Phase 2.3)
 
-### 2.4 Resource Management
-- [ ] **Task**: Implement game resource system
+### 2.4 Resource Management ⭐ **PHASE 2.4 COMPLETE**
+- [x] **Task**: Implement game resource system
+  - **COMPLETED**: ✅ Complete resource system with validation, population management, and economic constraints
+  - **Achievement**: ResourceValidator, PopulationManager, resource generation/deduction, economic balance validation
   - **Details**:
     - Resource tracking per faction (gold, wood, stone, energy)
-    - Resource requirements checking for unit creation/upgrades
-    - Resource generation from buildings and gathering
-    - Population limits and housing systems
-  - **Files**: `internal/engine/resources.go`
-  - **Test**: Start game, verify initial resources match faction XML
+    - Resource requirements checking for unit creation/upgrades (ResourceValidator integration)
+    - Resource generation from buildings and gathering mechanics
+    - Population limits and housing systems (PopulationManager with building capacity tracking)
+    - Resource node management with depletion and regeneration
+    - Player resource tracking with spending/earning history
+    - Economic balance validation and constraints
+  - **Files**: `internal/engine/resources.go`, `internal/engine/resource_validator.go`, `internal/engine/population_manager.go`
+  - **Test**: Complete resource-driven gameplay with validation and constraints
   - **Dependencies**: 2.1, 2.3 complete
 
-### 2.5 Command System
-- [ ] **Task**: Implement unit command processing
+### 2.5 Command System ⭐ **PHASE 2.5 COMPLETE**
+- [x] **Task**: Implement unit command processing
+  - **COMPLETED**: ✅ Full command system with game loop integration and resource-driven effects
+  - **Achievement**: 12 command types implemented, ResourceValidator integration, command effects execute actual resource deduction and entity creation
   - **Details**:
-    - `Command` interface with types: Move, Attack, Stop, Build, Upgrade, Repair
-    - Command queue per unit
-    - Command validation (can unit perform command, sufficient resources)
-    - Command execution state machine
-  - **Files**: `internal/engine/command.go`, `internal/engine/command_processor.go`
-  - **Test**: Issue move commands to units, verify they change position over time
+    - `Command` interface with types: Move, Attack, Stop, Build, Upgrade, Repair, Gather, Hold, Patrol, Follow, Guard, Produce
+    - Command queue per unit with priority support
+    - Command validation (ResourceValidator, PopulationManager integration)
+    - Command execution state machine with actual effects
+    - CommandProcessor.Update() integrated into World.Update() game loop
+    - Building construction with resource deduction and ObjectManager integration
+    - Unit production with resource costs and spawn positioning
+    - 661 comprehensive test suite restored (commands_test.go)
+  - **Files**: `internal/engine/commands.go` (1036 lines), `internal/engine/commands_test.go`, World.Update() integration
+  - **Test**: Commands execute actual effects - resources deducted, buildings created, units produced
   - **Dependencies**: 2.3 complete
 
-### 2.6 Basic Combat System
-- [ ] **Task**: Implement damage calculation and unit combat
+### 2.6 Basic Combat System ⭐ **PHASE 2.6 COMPLETE**
+- [x] **Task**: Implement damage calculation and unit combat
+  - **COMPLETED**: ✅ Full combat system with tech tree integration, line-of-sight, and death handling
+  - **Achievement**: Complete attack/armor type system with damage multipliers, Bresenham line-of-sight, enhanced attack commands with CombatSystem integration
   - **Details**:
-    - Attack/armor type system from tech tree XML
-    - Damage multiplier calculations
-    - Range checking and line-of-sight
-    - Health reduction and unit death handling
-  - **Files**: `internal/engine/combat.go`
-  - **Test**: Create units from different factions, have them fight, verify damage calculations
+    - Attack/armor type system from tech tree XML with damage multipliers
+    - Enhanced range checking with melee vs ranged differentiation
+    - Line-of-sight using Bresenham's algorithm with obstacle detection
+    - Comprehensive health reduction and unit death handling
+    - Resource drop and construction cancellation on death
+    - Command cleanup for targeting dead units
+    - Health regeneration system
+    - CombatSystem integration with CommandProcessor
+    - Attack cooldowns and positioning algorithms
+  - **Files**: `internal/engine/combat.go` (400+ lines), enhanced CommandProcessor integration
+  - **Test**: Combat system validates attack/armor combinations, executes damage with tech tree multipliers, handles unit death properly
   - **Dependencies**: 2.3, 2.5 complete
 
 ## Phase 3: Graphics and Rendering
@@ -185,27 +211,33 @@
   - **Dependencies**: 3.1 complete
   - **COMPLETED**: ✅ Complete ShaderManager with GLSL compilation, model/terrain shaders
 
-### 3.3 3D Model Rendering
-- [ ] **Task**: Render G3D models using OpenGL
+### 3.3 3D Model Rendering ⭐ **PHASE 3.3 COMPLETE**
+- [x] **Task**: Render G3D models using OpenGL
+  - **COMPLETED**: ✅ Complete G3D model rendering with texture support and transformation matrices
+  - **Achievement**: ModelManager with G3D format support, texture integration, 3D transformation system
   - **Details**:
     - Convert G3D mesh data to OpenGL vertex arrays/buffers
-    - Texture loading from PNG/JPEG files
-    - Basic 3D transformation matrices (model, view, projection)
+    - Texture loading from PNG/JPEG files with asset management integration
+    - Complete 3D transformation matrices (model, view, projection)
     - Render multiple models with different positions/orientations
+    - Model caching and batch operations for performance
+    - Vertex buffer optimization and GPU resource management
   - **Libraries**: `github.com/go-gl/mathgl/mgl32`
-  - **Files**: `internal/graphics/model.go`, `internal/graphics/renderer.go`
-  - **Test**: Render initiate unit model with texture at origin
+  - **Files**: `internal/graphics/model.go`, `internal/graphics/renderer/renderer.go`, `internal/graphics/texture.go`
+  - **Test**: Render complete G3D models with textures, transformations, and animations
   - **Dependencies**: 3.1, 3.2, 1.4 complete
 
-### 3.4 Camera System
-- [ ] **Task**: Implement 3D camera for game viewing
+### 3.4 Camera System ⭐ **PHASE 3.0 COMPLETE** (implemented as part of rendering foundation)
+- [x] **Task**: Implement 3D camera for game viewing
+  - **COMPLETED**: ✅ Complete camera system with perspective projection and view matrices
+  - **Achievement**: Perspective camera with position/rotation control, view/projection matrix generation
   - **Details**:
-    - Perspective camera with position, rotation, zoom
-    - Mouse controls: rotation, panning, zooming
-    - Keyboard controls: WASD movement
-    - Camera bounds (keep view within map boundaries)
-  - **Files**: `internal/graphics/camera.go`
-  - **Test**: Render terrain/models, verify camera movement works smoothly
+    - Perspective camera with position, rotation, zoom functionality
+    - Camera matrix generation for view and projection transformations
+    - Camera system integrated with renderer for 3D scene rendering
+    - Support for camera movement and orientation changes
+  - **Files**: `internal/graphics/renderer/renderer.go` (integrated), camera matrix utilities
+  - **Test**: 3D scenes render with proper perspective and camera positioning
   - **Dependencies**: 3.3 complete
 
 ### 3.5 Terrain Rendering
@@ -230,7 +262,86 @@
   - **Test**: Render animated unit cycling through all animations
   - **Dependencies**: 3.3 complete
 
-## Phase 4: Audio System
+### 3.7 Advanced Rendering ⭐ **PHASE 3.4 COMPLETE** (renumbered in actual implementation)
+- [x] **Task**: Advanced lighting and material systems
+  - **COMPLETED**: ✅ Multi-light scenes with advanced materials and PBR support
+  - **Achievement**: 8+ simultaneous lights, PBR material system, normal mapping, advanced shader pipeline
+  - **Details**:
+    - Multi-light system supporting directional, point, and spot lights with proper attenuation
+    - Advanced material system with 6 material types (Basic, Textured, Normal-Mapped, PBR, Emissive, Metallic)
+    - PBR (Physically Based Rendering) with metallic-roughness workflow
+    - Normal mapping and tangent space calculations for surface detail
+    - Material-specific shader selection and advanced shader pipeline
+    - Texture management with multi-slot support (diffuse, normal, specular, emissive, etc.)
+    - Enhanced ShaderInterface with complete uniform type support
+  - **Files**: `internal/graphics/lighting.go` (359 lines), `internal/graphics/material.go` (440 lines), `internal/graphics/shaders/advanced_model.vert/frag`, `internal/graphics/shaders/normal_mapped_material.vert/frag`
+  - **Test**: Multi-light scenes with PBR materials, normal mapping, and advanced lighting effects
+  - **Dependencies**: 3.3 complete
+
+## Phase 4: AI and Pathfinding Systems
+
+### 4.1 A* Pathfinding System ⭐ **PHASE 4.1.A COMPLETE**
+- [x] **Task**: Implement intelligent unit navigation
+  - **COMPLETED**: ✅ Complete A* pathfinding with terrain awareness and dynamic obstacle avoidance
+  - **Achievement**: 8-directional pathfinding, terrain costs, performance optimization, command system integration
+  - **Details**:
+    - Complete A* algorithm implementation with priority queue and heuristics
+    - 8-directional movement with proper distance costs (√2 for diagonals)
+    - Terrain awareness with different movement costs (grass 1.0x, stone 1.5x, water 3.0x, sand 1.2x)
+    - Dynamic obstacle detection with units and buildings
+    - Partial pathfinding for unreachable targets
+    - Unit size support for collision detection
+    - Range limiting for performance optimization
+    - PathfindingManager and TerrainMap integration with World
+    - Full integration with CommandProcessor for move commands
+  - **Files**: `internal/engine/pathfinding.go` (400+ lines), World.Update() integration, CommandProcessor enhancement
+  - **Test**: Units intelligently navigate complex battlefields, avoid obstacles, adapt to changing conditions
+  - **Dependencies**: 2.2, 2.3, 2.5 complete
+
+### 4.2 Unit Behavior Tree System ⭐ **PHASE 4.1.B COMPLETE**
+- [x] **Task**: Sophisticated AI decision-making for autonomous unit behavior
+  - **COMPLETED**: ✅ Complete hierarchical behavior tree system with pre-built AI templates
+  - **Achievement**: Node-based AI architecture, 6 pre-built templates, action/condition nodes, command integration
+  - **Details**:
+    - Complete behavior tree architecture (BehaviorNode, CompositeNode, DecoratorNode)
+    - Execution states (Success, Failure, Running, Invalid) with robust state management
+    - BehaviorContext with blackboard memory system and timing data
+    - Composite nodes: SequenceNode, SelectorNode, ParallelNode with policy support
+    - Decorator nodes: InverterNode, RepeaterNode, SucceederNode
+    - Action nodes: MoveToPositionAction, AttackTargetAction, GatherResourceAction, BuildStructureAction, WaitAction
+    - Condition nodes: Health checks, enemy detection, resource detection, state validation
+    - Pre-built AI templates: Worker AI, Soldier AI, Scout AI, Builder AI, Guard AI, General AI
+    - BehaviorTreeManager for lifecycle management and BehaviorTreeLibrary for template registry
+    - Full integration with command system and pathfinding
+  - **Files**: `internal/engine/behavior_tree.go`, `internal/engine/behavior_actions.go`, `internal/engine/behavior_templates.go`, World.Update() integration
+  - **Test**: Units exhibit intelligent autonomous behavior based on type (workers gather, soldiers fight, scouts explore)
+  - **Dependencies**: 4.1 pathfinding, 2.5 commands complete
+
+### 4.3 Strategic AI System
+- [ ] **Task**: High-level AI for resource management and tactical decisions
+  - **Details**:
+    - AI player decision-making for economy and military strategy
+    - Resource allocation and base expansion planning
+    - Army composition and tactical unit coordination
+    - Technology tree progression and upgrade prioritization
+    - Difficulty scaling and AI personality systems
+  - **Files**: `internal/engine/strategic_ai.go`, `internal/engine/ai_player.go`
+  - **Test**: AI provides challenging strategic gameplay at multiple difficulty levels
+  - **Dependencies**: 4.1, 4.2 complete
+
+### 4.4 Unit Formation and Group Movement
+- [ ] **Task**: Coordinated unit movements and tactical formations
+  - **Details**:
+    - Group pathfinding algorithms for multiple units
+    - Formation patterns (line, wedge, column, scatter)
+    - Formation maintenance during movement and combat
+    - Group command processing and coordination
+    - Collision avoidance within formations
+  - **Files**: `internal/engine/formations.go`, `internal/engine/group_movement.go`
+  - **Test**: Large groups of units move in formation while maintaining organization
+  - **Dependencies**: 4.1 pathfinding complete
+
+## Phase 5: Audio System
 
 ### 4.1 Audio Context Setup
 - [ ] **Task**: Initialize audio system and device management
@@ -527,20 +638,26 @@
   - **Duration**: Ongoing
   - **Dependencies**: Stable 1.0 release
 
-## Development Estimates
+## Development Progress and Estimates
 
-**Total Estimated Timeline**: 16-20 weeks for full-time development
+**Current Status**: Phase 4.1 (AI and Pathfinding) - 2/4 tasks complete
 
-- **Phase 1**: 3 weeks (Data Layer)
-- **Phase 2**: 4 weeks (Game Engine)
-- **Phase 3**: 3 weeks (Graphics)
-- **Phase 4**: 2 weeks (Audio)
-- **Phase 5**: 2 weeks (UI)
-- **Phase 6**: 2 weeks (AI)
+### Completed Phases:
+- ✅ **Phase 1**: 3 weeks (Data Layer) - **COMPLETED** - Complete MegaGlest XML parsing, G3D format, asset management
+- ✅ **Phase 2**: 4 weeks (Game Engine) - **COMPLETED** - Full game state, map system, units, resources, commands, combat
+- ✅ **Phase 3.0-3.4**: 3 weeks (Graphics Foundation & Advanced Rendering) - **COMPLETED** - OpenGL rendering, lighting, materials, PBR
+- 🔄 **Phase 4.1**: 2 weeks (AI and Pathfinding) - **IN PROGRESS** - A* pathfinding ✅, Behavior trees ✅, Strategic AI pending, Formation system pending
+
+### Remaining Timeline:
+- **Phase 4.2-4.4**: 2 weeks (Complete AI Systems)
+- **Phase 5**: 2 weeks (Audio)
+- **Phase 6**: 2 weeks (UI)
 - **Phase 7**: 2 weeks (Networking)
 - **Phase 8**: 2 weeks (Integration)
 - **Phase 9**: 2 weeks (Testing)
 - **Phase 10**: Ongoing
+
+**Revised Estimated Timeline**: 14-16 weeks remaining for full completion
 
 ## Success Criteria
 

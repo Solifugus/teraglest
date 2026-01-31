@@ -19,6 +19,12 @@ type World struct {
 	// World state
 	players      map[int]*Player                 // All players in the game (human + AI)
 	ObjectManager *ObjectManager                 // Centralized object management
+	commandProcessor *CommandProcessor           // Command system integration
+	pathfindingMgr *PathfindingManager           // A* pathfinding system
+	behaviorTreeMgr *BehaviorTreeManager         // Unit AI behavior tree system
+	strategicAIMgr *StrategicAIManager           // Strategic AI management system
+	groupMgr     *GroupManager                   // Unit formation and group management
+	productionSys *ProductionSystem              // Building and unit production system
 	resources    map[int]*ResourceNode           // Resource nodes on the map
 
 	// World management
@@ -31,6 +37,7 @@ type World struct {
 	Height       int                             // Map height in tiles
 	tileSize     float32                         // Size of each map tile
 	Map          *Map                            // Loaded map data (if created from map)
+	TerrainMap   *TerrainMap                     // Terrain data for pathfinding
 
 	// Grid system for positioning and collision detection
 	occupancyGrid [][]bool                      // Track which tiles have units/buildings
@@ -76,6 +83,39 @@ type ResourceNode struct {
 	IsDepletable bool                            // Whether resource can be depleted
 }
 
+// TerrainMap represents terrain data for pathfinding and rendering
+type TerrainMap struct {
+	Width       int        // Map width in tiles
+	Height      int        // Map height in tiles
+	TerrainData [][]int    // 2D array of terrain type IDs
+}
+
+// GetTerrain returns the terrain type at the specified coordinates
+func (tm *TerrainMap) GetTerrain(x, y int) int {
+	if x < 0 || x >= tm.Width || y < 0 || y >= tm.Height {
+		return -1 // Invalid terrain
+	}
+	return tm.TerrainData[y][x]
+}
+
+// NewTerrainMap creates a new terrain map with default grass terrain
+func NewTerrainMap(width, height int) *TerrainMap {
+	// Initialize with default grass terrain (type 0)
+	terrainData := make([][]int, height)
+	for y := 0; y < height; y++ {
+		terrainData[y] = make([]int, width)
+		for x := 0; x < width; x++ {
+			terrainData[y][x] = 0 // Grass terrain
+		}
+	}
+
+	return &TerrainMap{
+		Width:       width,
+		Height:      height,
+		TerrainData: terrainData,
+	}
+}
+
 
 // NewWorld creates a new game world instance
 func NewWorld(settings GameSettings, techTree *data.TechTree, assetMgr *data.AssetManager) (*World, error) {
@@ -102,6 +142,24 @@ func NewWorld(settings GameSettings, techTree *data.TechTree, assetMgr *data.Ass
 
 	// Initialize ObjectManager
 	world.ObjectManager = NewObjectManager(world)
+
+	// Initialize CommandProcessor
+	world.commandProcessor = NewCommandProcessor(world)
+
+	// Initialize PathfindingManager
+	world.pathfindingMgr = NewPathfindingManager(world)
+
+	// Initialize BehaviorTreeManager
+	world.behaviorTreeMgr = NewBehaviorTreeManager(world)
+
+	// Initialize StrategicAIManager
+	world.strategicAIMgr = NewStrategicAIManager(world)
+
+	// Initialize GroupManager
+	world.groupMgr = NewGroupManager(world)
+
+	// Initialize ProductionSystem
+	world.productionSys = NewProductionSystem(world)
 
 	// Initialize grid system
 	if err := world.initializeGrid(); err != nil {
@@ -154,6 +212,24 @@ func NewWorldFromMap(settings GameSettings, techTree *data.TechTree, assetMgr *d
 
 	// Initialize ObjectManager
 	world.ObjectManager = NewObjectManager(world)
+
+	// Initialize CommandProcessor
+	world.commandProcessor = NewCommandProcessor(world)
+
+	// Initialize PathfindingManager
+	world.pathfindingMgr = NewPathfindingManager(world)
+
+	// Initialize BehaviorTreeManager
+	world.behaviorTreeMgr = NewBehaviorTreeManager(world)
+
+	// Initialize StrategicAIManager
+	world.strategicAIMgr = NewStrategicAIManager(world)
+
+	// Initialize GroupManager
+	world.groupMgr = NewGroupManager(world)
+
+	// Initialize ProductionSystem
+	world.productionSys = NewProductionSystem(world)
 
 	// Initialize grid system from map data
 	if err := world.initializeFromMap(mapData); err != nil {
@@ -215,6 +291,27 @@ func (w *World) Update(deltaTime time.Duration) {
 	// Update all game objects through the ObjectManager
 	w.ObjectManager.Update(deltaTime)
 
+	// Process commands after object updates
+	w.commandProcessor.Update(deltaTime)
+
+	// Update production system (building construction and unit production)
+	if w.productionSys != nil {
+		w.productionSys.Update(deltaTime)
+	}
+
+	// Update behavior trees for unit AI
+	w.behaviorTreeMgr.Update(deltaTime)
+
+	// Update strategic AI for AI players
+	if w.strategicAIMgr != nil {
+		w.strategicAIMgr.Update(deltaTime)
+	}
+
+	// Update unit formations and groups
+	if w.groupMgr != nil {
+		w.groupMgr.Update(deltaTime)
+	}
+
 	// Update players (resource generation, etc.)
 	for _, player := range w.players {
 		w.updatePlayer(player, deltaTime)
@@ -251,6 +348,92 @@ func (w *World) GetPlayer(playerID int) *Player {
 	w.mutex.RLock()
 	defer w.mutex.RUnlock()
 	return w.players[playerID]
+}
+
+// GetGameTime returns the total elapsed game time
+func (w *World) GetGameTime() time.Duration {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+	return w.gameTime
+}
+
+// AddPlayer adds a new player to the world
+func (w *World) AddPlayer(playerID int, name string, factionName string, isAI bool) error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if _, exists := w.players[playerID]; exists {
+		return fmt.Errorf("player with ID %d already exists", playerID)
+	}
+
+	player := &Player{
+		ID:           playerID,
+		Name:         name,
+		FactionName:  factionName,
+		IsAI:         isAI,
+		IsActive:     true,
+		Resources:    make(map[string]int),
+		ResourcesGathered: make(map[string]int),
+		ResourcesSpent:    make(map[string]int),
+	}
+
+	// Initialize starting resources
+	player.Resources["gold"] = 1000
+	player.Resources["wood"] = 1000
+	player.Resources["stone"] = 500
+	player.Resources["energy"] = 300
+
+	w.players[playerID] = player
+	return nil
+}
+
+// InitializeAIPlayer creates AI behavior for a player
+func (w *World) InitializeAIPlayer(playerID int, personality string, difficulty string) error {
+	if w.strategicAIMgr == nil {
+		return fmt.Errorf("strategic AI manager not initialized")
+	}
+
+	player := w.GetPlayer(playerID)
+	if player == nil {
+		return fmt.Errorf("player with ID %d not found", playerID)
+	}
+
+	if !player.IsAI {
+		return fmt.Errorf("player %d is not an AI player", playerID)
+	}
+
+	// Convert string parameters to types
+	var aiPersonality AIPersonality
+	switch personality {
+	case "conservative":
+		aiPersonality = ConservativePersonality
+	case "aggressive":
+		aiPersonality = AggressivePersonality
+	case "balanced":
+		aiPersonality = BalancedPersonality
+	case "technological":
+		aiPersonality = TechnologicalPersonality
+	case "expansionist":
+		aiPersonality = ExpansionistPersonality
+	default:
+		aiPersonality = BalancedPersonality
+	}
+
+	var aiDifficulty AIDifficulty
+	switch difficulty {
+	case "easy":
+		aiDifficulty = DifficultyEasy
+	case "normal":
+		aiDifficulty = DifficultyNormal
+	case "hard":
+		aiDifficulty = DifficultyHard
+	case "expert":
+		aiDifficulty = DifficultyExpert
+	default:
+		aiDifficulty = DifficultyNormal
+	}
+
+	return w.strategicAIMgr.InitializeAIPlayer(playerID, aiPersonality, aiDifficulty)
 }
 
 // GetAllPlayers returns a copy of all players (thread-safe)
@@ -743,6 +926,9 @@ func (w *World) initializeGrid() error {
 		}
 	}
 
+	// Initialize terrain map for pathfinding
+	w.TerrainMap = NewTerrainMap(w.Width, w.Height)
+
 	return nil
 }
 
@@ -998,6 +1184,31 @@ func (w *World) GetTileSize() float32 {
 	return w.tileSize
 }
 
+// WorldToGrid converts world coordinates to grid coordinates using this world's tile size
+func (w *World) WorldToGrid(worldPos Vector3) GridPosition {
+	return WorldToGrid(worldPos, w.tileSize)
+}
+
+// GridToWorld converts grid coordinates to world coordinates using this world's tile size
+func (w *World) GridToWorld(gridPos GridPosition) Vector3 {
+	return GridToWorld(gridPos, w.tileSize)
+}
+
+// IsWalkable checks if a grid position is walkable (pathfinding compatible method)
+func (w *World) IsWalkable(gridPos GridPosition) bool {
+	return w.IsPositionWalkable(gridPos.Grid)
+}
+
+// IsOccupied checks if a grid position is occupied (pathfinding compatible method)
+func (w *World) IsOccupied(gridPos GridPosition) bool {
+	return w.ObjectManager.UnitManager.IsPositionOccupied(gridPos.Grid)
+}
+
+// SetOccupiedGrid sets the occupancy state for a grid position (pathfinding compatible method)
+func (w *World) SetOccupiedGrid(gridPos GridPosition, occupied bool) {
+	w.SetOccupied(gridPos.Grid, occupied)
+}
+
 // GetAllResourceNodes returns all resource nodes in the world
 func (w *World) GetAllResourceNodes() []*ResourceNode {
 	w.mutex.RLock()
@@ -1080,5 +1291,62 @@ func (w *World) GetNearestWalkablePosition(targetPos Vector2i) Vector2i {
 // isValidGridPosition checks if a grid position is within world bounds (internal helper)
 func (w *World) isValidGridPosition(pos Vector2i) bool {
 	return pos.X >= 0 && pos.Y >= 0 && pos.X < w.Width && pos.Y < w.Height
+}
+
+// Accessor methods for UI integration
+
+// GetCommandProcessor returns the command processor for issuing commands
+func (w *World) GetCommandProcessor() interface{} {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+	return w.commandProcessor
+}
+
+// GetProductionSystem returns the production system for managing production
+func (w *World) GetProductionSystem() *ProductionSystem {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+	return w.productionSys
+}
+
+// GetPlayers returns all players in the world
+func (w *World) GetPlayers() map[int]*Player {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+
+	// Return copy to avoid race conditions
+	players := make(map[int]*Player)
+	for id, player := range w.players {
+		players[id] = player
+	}
+	return players
+}
+
+// GetResources returns all resource nodes in the world
+func (w *World) GetResources() map[int]*ResourceNode {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+
+	// Return copy to avoid race conditions
+	resources := make(map[int]*ResourceNode)
+	for id, resource := range w.resources {
+		resources[id] = resource
+	}
+	return resources
+}
+
+
+// GetNextEntityID returns the next available entity ID
+func (w *World) GetNextEntityID() int {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	id := w.nextEntityID
+	w.nextEntityID++
+	return id
+}
+
+// GetResourcesMutable returns a mutable reference to resources (for test setup)
+func (w *World) GetResourcesMutable() map[int]*ResourceNode {
+	return w.resources
 }
 

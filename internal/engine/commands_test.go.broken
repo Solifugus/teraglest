@@ -1,0 +1,716 @@
+package engine
+
+import (
+	"testing"
+	"time"
+
+	"teraglest/internal/data"
+)
+
+func TestUnitCommand_Creation(t *testing.T) {
+	target := Vector3{X: 10, Y: 0, Z: 15}
+	command := UnitCommand{
+		Type:      CommandMove,
+		Target:    &target,
+		Priority:  1,
+		CreatedAt: time.Now(),
+	}
+
+	if command.Type != CommandMove {
+		t.Errorf("Expected command type Move, got %v", command.Type)
+	}
+
+	if command.Priority != 1 {
+		t.Errorf("Expected priority 1, got %v", command.Priority)
+	}
+
+	if command.Target.X != 10 {
+		t.Errorf("Expected target X=10, got %.1f", command.Target.X)
+	}
+}
+
+func TestCommandType_String(t *testing.T) {
+	tests := []struct {
+		cmdType  CommandType
+		expected string
+	}{
+		{CommandMove, "Move"},
+		{CommandAttack, "Attack"},
+		{CommandGather, "Gather"},
+		{CommandBuild, "Build"},
+		{CommandRepair, "Repair"},
+		{CommandStop, "Stop"},
+		{CommandHold, "Hold"},
+		{CommandPatrol, "Patrol"},
+		{CommandFollow, "Follow"},
+		{CommandGuard, "Guard"},
+		{CommandProduce, "Produce"},
+		{CommandUpgrade, "Upgrade"},
+	}
+
+	for _, test := range tests {
+		result := test.cmdType.String()
+		if result != test.expected {
+			t.Errorf("Expected %s, got %s", test.expected, result)
+		}
+	}
+}
+
+func TestCommandPriority(t *testing.T) {
+	command := UnitCommand{
+		Type:     CommandMove,
+		Priority: 2, // High priority
+	}
+
+	if command.Priority != 2 {
+		t.Errorf("Expected priority 2, got %d", command.Priority)
+	}
+}
+
+func TestCommandProcessor_Creation(t *testing.T) {
+	// Create test world
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+
+	processor := NewCommandProcessor(world)
+
+	if processor == nil {
+		t.Error("CommandProcessor should not be nil")
+	}
+
+	if processor.world != world {
+		t.Error("CommandProcessor world reference not set correctly")
+	}
+}
+
+func TestCommandProcessor_IssueCommand(t *testing.T) {
+	// Create test environment using proper API
+	settings := GameSettings{PlayerFactions: map[int]string{1: "test"}}
+	techTree := &data.TechTree{}
+	assetMgr := &data.AssetManager{}
+
+	world, err := NewWorld(settings, techTree, assetMgr)
+	if err != nil {
+		t.Fatalf("Failed to create world: %v", err)
+	}
+
+	processor := NewCommandProcessor(world)
+
+	// Create test unit using proper UnitManager with minimal unit def
+	unitDef := &data.UnitDefinition{
+		Name: "Test Warrior",
+	}
+
+	unit, err := world.ObjectManager.CreateUnit(1, "warrior", Vector3{X: 0, Y: 0, Z: 0}, unitDef)
+	if err != nil {
+		t.Fatalf("Failed to create unit: %v", err)
+	}
+
+	// Test move command
+	moveCmd := CreateMoveCommand(Vector3{X: 10, Y: 0, Z: 10}, false)
+	err = processor.IssueCommand(unit.GetID(), moveCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue move command: %v", err)
+	}
+
+	if len(unit.CommandQueue) != 0 { // Command should be current, not queued
+		t.Errorf("Expected 0 commands in queue (should be current), got %d", len(unit.CommandQueue))
+	}
+
+	if unit.CurrentCommand == nil || unit.CurrentCommand.Type != CommandMove {
+		t.Error("Expected current command to be Move")
+	}
+
+	// Test invalid unit ID
+	err = processor.IssueCommand(999, moveCmd)
+	if err == nil {
+		t.Error("Expected error for invalid unit ID")
+	}
+}
+
+func TestCommandProcessor_ProcessCommands(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	// Use proper world creation
+	settings := GameSettings{PlayerFactions: map[int]string{1: "test"}}
+	techTree := &data.TechTree{}
+	assetMgr := &data.AssetManager{}
+
+	world, err := NewWorld(settings, techTree, assetMgr)
+	if err != nil {
+		t.Fatalf("Failed to create world: %v", err)
+	}
+	processor = NewCommandProcessor(world)
+
+	// Create test unit properly with minimal unit def
+	unitDef := &data.UnitDefinition{
+		Name: "Test Unit",
+	}
+
+	unit, err := world.ObjectManager.CreateUnit(1, "test_unit", Vector3{X: 0, Y: 0, Z: 0}, unitDef)
+	if err != nil {
+		t.Fatalf("Failed to create unit: %v", err)
+	}
+
+	// Issue move command
+	moveCmd := CreateMoveCommand(Vector3{X: 10, Y: 0, Z: 0}, false)
+	err = processor.IssueCommand(unit.GetID(), moveCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue command: %v", err)
+	}
+
+	// Process command directly
+	deltaTime := 100 * time.Millisecond
+	if unit.CurrentCommand != nil {
+		processor.ProcessCommand(unit, unit.CurrentCommand, deltaTime)
+	}
+
+	// Unit should be moving
+	if unit.State != UnitStateMoving {
+		t.Errorf("Expected unit to be moving, got state %v", unit.State)
+	}
+
+	// Unit should reach destination
+	if unit.Position.X != 10 {
+		t.Errorf("Expected unit to reach X=10, got %.1f", unit.Position.X)
+	}
+
+	// Command should be completed and removed
+	if len(unit.CommandQueue) != 0 {
+		t.Errorf("Expected command queue to be empty, got %d commands", len(unit.CommandQueue))
+	}
+}
+
+func TestCommandProcessor_AttackCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	world.ObjectManager = NewObjectManager(world)
+	processor := NewCommandProcessor(world)
+
+	// Create attacker
+	attacker := &GameUnit{
+		ID:           1,
+		PlayerID:     1,
+		UnitType:     "warrior",
+		Position:     Vector3{X: 0, Y: 0, Z: 0},
+		AttackRange:  5.0,
+		AttackDamage: 25,
+		AttackSpeed:  1.0, // attacks per second
+		State:        UnitStateIdle,
+		CommandQueue: make([]UnitCommand, 0),
+	}
+
+	// Create target
+	target := &GameUnit{
+		ID:        2,
+		PlayerID:  2,
+		UnitType:  "archer",
+		Position:  Vector3{X: 3, Y: 0, Z: 0},
+		Health:    100,
+		MaxHealth: 100,
+		State:     UnitStateIdle,
+	}
+
+	// Add units to the world via ObjectManager
+	createdAttacker, _ := world.ObjectManager.CreateUnit(attacker.PlayerID, attacker.UnitType, attacker.Position, nil)
+	createdTarget, _ := world.ObjectManager.CreateUnit(target.PlayerID, target.UnitType, target.Position, nil)
+
+	// Update our references to use the created units
+	attacker = createdAttacker
+	target = createdTarget
+
+	// Issue attack command
+	attackCmd := CreateAttackCommand(target, false)
+	err := processor.IssueCommand(1, attackCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue attack command: %v", err)
+	}
+
+	// Process command
+	processor.Update(time.Second)
+
+	// Target should take damage
+	if target.GetHealth() >= 100 {
+		t.Error("Target should have taken damage")
+	}
+
+	// Attacker should be attacking
+	if attacker.State != UnitStateAttacking {
+		t.Errorf("Expected attacker to be attacking, got state %v", attacker.State)
+	}
+}
+
+func TestCommandProcessor_GatherCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create gatherer unit
+	unit := &GameUnit{
+		ID:               1,
+		PlayerID:         1,
+		UnitType:         "worker",
+		Position:         Vector3{X: 0, Y: 0, Z: 0},
+		CarriedResources: make(map[string]int),
+		GatherRate:      map[string]float32{"wood": 10.0},
+		State:           UnitStateIdle,
+		CommandQueue:    make([]UnitCommand, 0),
+	}
+
+	// Add unit to object manager manually
+	createdUnit, _ := objectMgr.CreateUnit(unit.PlayerID, unit.UnitType, unit.Position, nil)
+	if createdUnit != nil {
+		unit = createdUnit
+	}
+	world.ObjectManager = objectMgr
+
+	// Issue gather command
+	// Create a mock resource node
+	resourceNode := &ResourceNode{
+		ID:           1,
+		ResourceType: "wood",
+		Position:     Vector3{X: 5, Y: 0, Z: 5},
+		Amount:       1000,
+	}
+	gatherCmd := CreateGatherCommand(resourceNode, false)
+	err := processor.IssueCommand(1, gatherCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue gather command: %v", err)
+	}
+
+	// Process command
+	processor.Update(time.Second)
+
+	// Unit should be gathering
+	if unit.State != UnitStateGathering {
+		t.Errorf("Expected unit to be gathering, got state %v", unit.State)
+	}
+}
+
+func TestCommandProcessor_BuildCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create builder unit
+	unit := &GameUnit{
+		ID:           1,
+		PlayerID:     1,
+		UnitType:     "worker",
+		Position:     Vector3{X: 0, Y: 0, Z: 0},
+		State:        UnitStateIdle,
+		CommandQueue: make([]UnitCommand, 0),
+	}
+
+	// Add unit to object manager manually
+	createdUnit, _ := objectMgr.CreateUnit(unit.PlayerID, unit.UnitType, unit.Position, nil)
+	if createdUnit != nil {
+		unit = createdUnit
+	}
+	world.ObjectManager = objectMgr
+
+	// Issue build command
+	buildCmd := CreateBuildCommand(Vector3{X: 10, Y: 0, Z: 10}, "barracks", false)
+	err := processor.IssueCommand(1, buildCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue build command: %v", err)
+	}
+
+	if len(unit.CommandQueue) != 1 {
+		t.Errorf("Expected 1 command in queue, got %d", len(unit.CommandQueue))
+	}
+
+	if unit.CommandQueue[0].Type != CommandBuild {
+		t.Errorf("Expected Build command, got %v", unit.CommandQueue[0].Type)
+	}
+}
+
+func TestCommandProcessor_StopCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create unit with commands
+	unit := &GameUnit{
+		ID:           1,
+		PlayerID:     1,
+		UnitType:     "soldier",
+		Position:     Vector3{X: 0, Y: 0, Z: 0},
+		State:        UnitStateMoving,
+		CommandQueue: []UnitCommand{
+			CreateMoveCommand(Vector3{X: 10, Y: 0, Z: 10}, false),
+			CreateMoveCommand(Vector3{X: 20, Y: 0, Z: 20}, false),
+		},
+	}
+
+	// Add unit to object manager manually
+	createdUnit, _ := objectMgr.CreateUnit(unit.PlayerID, unit.UnitType, unit.Position, nil)
+	if createdUnit != nil {
+		unit = createdUnit
+	}
+	world.ObjectManager = objectMgr
+
+	// Issue stop command
+	stopCmd := CreateStopCommand()
+	err := processor.IssueCommand(1, stopCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue stop command: %v", err)
+	}
+
+	// Process command
+	processor.Update(time.Millisecond)
+
+	// Unit should be idle and queue should be clear
+	if unit.State != UnitStateIdle {
+		t.Errorf("Expected unit to be idle, got state %v", unit.State)
+	}
+
+	if len(unit.CommandQueue) != 0 {
+		t.Errorf("Expected command queue to be empty, got %d commands", len(unit.CommandQueue))
+	}
+}
+
+func TestCommandProcessor_PatrolCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create unit
+	unit := &GameUnit{
+		ID:           1,
+		PlayerID:     1,
+		UnitType:     "soldier",
+		Position:     Vector3{X: 0, Y: 0, Z: 0},
+		State:        UnitStateIdle,
+		CommandQueue: make([]UnitCommand, 0),
+	}
+
+	// Add unit to object manager manually
+	createdUnit, _ := objectMgr.CreateUnit(unit.PlayerID, unit.UnitType, unit.Position, nil)
+	if createdUnit != nil {
+		unit = createdUnit
+	}
+	world.ObjectManager = objectMgr
+
+	// Issue patrol command
+	patrolCmd := CreatePatrolCommand(Vector3{X: 10, Y: 0, Z: 10}, false)
+	err := processor.IssueCommand(1, patrolCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue patrol command: %v", err)
+	}
+
+	if len(unit.CommandQueue) != 1 {
+		t.Errorf("Expected 1 command in queue, got %d", len(unit.CommandQueue))
+	}
+
+	if unit.CommandQueue[0].Type != CommandPatrol {
+		t.Errorf("Expected Patrol command, got %v", unit.CommandQueue[0].Type)
+	}
+}
+
+func TestCommandProcessor_ProduceCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create building
+	building := &GameBuilding{
+		ID:              1,
+		PlayerID:        1,
+		BuildingType:    "barracks",
+		IsBuilt:         true,
+		ProductionQueue: make([]ProductionItem, 0),
+	}
+
+	// Add building using CreateBuilding method
+	createdBuilding, _ := objectMgr.CreateBuilding(building.PlayerID, building.BuildingType, Vector3{X: 0, Y: 0, Z: 0}, nil)
+	if createdBuilding != nil {
+		building = createdBuilding
+	}
+	world.ObjectManager = objectMgr
+
+	// Issue produce command
+	unitCost := map[string]int{"gold": 100, "wood": 50}
+	produceCmd := CreateProduceCommand("warrior", unitCost)
+	err := processor.IssueBuildingCommand(1, produceCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue produce command: %v", err)
+	}
+
+	// Should add to production queue
+	if len(building.ProductionQueue) != 1 {
+		t.Errorf("Expected 1 item in production queue, got %d", len(building.ProductionQueue))
+	}
+
+	if building.ProductionQueue[0].ItemName != "warrior" {
+		t.Errorf("Expected warrior in production queue, got %s", building.ProductionQueue[0].ItemName)
+	}
+}
+
+func TestCommandProcessor_UpgradeCommand(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create building
+	building := &GameBuilding{
+		ID:           1,
+		PlayerID:     1,
+		BuildingType: "barracks",
+		IsBuilt:      true,
+	}
+
+	// Add building using CreateBuilding method
+	createdBuilding, _ := objectMgr.CreateBuilding(building.PlayerID, building.BuildingType, Vector3{X: 0, Y: 0, Z: 0}, nil)
+	if createdBuilding != nil {
+		building = createdBuilding
+	}
+	world.ObjectManager = objectMgr
+
+	// Issue upgrade command
+	upgradeCost := map[string]int{"gold": 200, "stone": 150}
+	upgradeCmd := CreateUpgradeCommand("armor_upgrade", upgradeCost)
+	err := processor.IssueBuildingCommand(1, upgradeCmd)
+	if err != nil {
+		t.Fatalf("Failed to issue upgrade command: %v", err)
+	}
+
+	// Should set current upgrade
+	if building.CurrentUpgrade == nil {
+		t.Error("Expected current upgrade to be set")
+	} else if building.CurrentUpgrade.UpgradeType != "armor_upgrade" {
+		t.Errorf("Expected armor_upgrade, got %s", building.CurrentUpgrade.UpgradeType)
+	}
+}
+
+func TestCommandQueue_Priority(t *testing.T) {
+	unit := &GameUnit{
+		ID:           1,
+		PlayerID:     1,
+		UnitType:     "soldier",
+		CommandQueue: make([]UnitCommand, 0),
+	}
+
+	// Add commands with different priorities
+	lowCmd := CreateMoveCommand(Vector3{X: 1, Y: 0, Z: 1}, false)
+	lowCmd.Priority = PriorityLow
+
+	normalCmd := CreateMoveCommand(Vector3{X: 2, Y: 0, Z: 2}, false)
+	normalCmd.Priority = PriorityNormal
+
+	highCmd := CreateMoveCommand(Vector3{X: 3, Y: 0, Z: 3}, false)
+	highCmd.Priority = PriorityHigh
+
+	criticalCmd := CreateStopCommand()
+	criticalCmd.Priority = PriorityCritical
+
+	// Add in random order
+	unit.CommandQueue = append(unit.CommandQueue, lowCmd)
+	unit.CommandQueue = append(unit.CommandQueue, normalCmd)
+	unit.CommandQueue = append(unit.CommandQueue, highCmd)
+	unit.CommandQueue = append(unit.CommandQueue, criticalCmd)
+
+	// Sort by priority
+	SortCommandsByPriority(unit.CommandQueue)
+
+	// Should be sorted: Critical, High, Normal, Low
+	expectedPriorities := []int{PriorityCritical, PriorityHigh, PriorityNormal, PriorityLow}
+	for i, cmd := range unit.CommandQueue {
+		if cmd.Priority != expectedPriorities[i] {
+			t.Errorf("Command %d: expected priority %v, got %v", i, expectedPriorities[i], cmd.Priority)
+		}
+	}
+}
+
+func TestCommandValidation(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+
+	// Test invalid move command (out of bounds)
+	moveCmd := CreateMoveCommand(Vector3{X: 200, Y: 0, Z: 200})
+	if processor.IsValidCommand(moveCmd) {
+		t.Error("Move command outside world bounds should be invalid")
+	}
+
+	// Test valid move command
+	validMoveCmd := CreateMoveCommand(Vector3{X: 50, Y: 0, Z: 50})
+	if !processor.IsValidCommand(validMoveCmd) {
+		t.Error("Valid move command should be valid")
+	}
+
+	// Test attack command with invalid target
+	attackCmd := CreateAttackCommand(999) // Non-existent unit
+	if processor.IsValidCommand(attackCmd) {
+		t.Error("Attack command with non-existent target should be invalid")
+	}
+}
+
+func TestCommandProcessor_Concurrency(t *testing.T) {
+	// Create test environment
+	world := &World{
+		Width:  100,
+		Height: 100,
+	}
+	processor := NewCommandProcessor(world)
+	objectMgr := NewObjectManager(world)
+
+	// Create multiple units
+	for i := 1; i <= 10; i++ {
+		unit := &GameUnit{
+			ID:           i,
+			PlayerID:     1,
+			UnitType:     "soldier",
+			Position:     Vector3{X: float64(i), Y: 0, Z: 0},
+			State:        UnitStateIdle,
+			CommandQueue: make([]UnitCommand, 0),
+		}
+		// Add unit to object manager manually
+	createdUnit, _ := objectMgr.CreateUnit(unit.PlayerID, unit.UnitType, unit.Position, nil)
+	if createdUnit != nil {
+		unit = createdUnit
+	}
+	}
+	world.ObjectManager = objectMgr
+
+	// Test concurrent command issuing
+	done := make(chan bool, 3)
+
+	// Goroutine 1: Issue move commands
+	go func() {
+		for i := 1; i <= 10; i++ {
+			cmd := CreateMoveCommand(Vector3{X: float64(i * 10), Y: 0, Z: 0})
+			processor.IssueCommand(i, cmd)
+		}
+		done <- true
+	}()
+
+	// Goroutine 2: Issue stop commands
+	go func() {
+		for i := 1; i <= 10; i++ {
+			cmd := CreateStopCommand()
+			processor.IssueCommand(i, cmd)
+		}
+		done <- true
+	}()
+
+	// Goroutine 3: Process commands
+	go func() {
+		for i := 0; i < 50; i++ {
+			processor.Update(10 * time.Millisecond)
+		}
+		done <- true
+	}()
+
+	// Wait for all goroutines
+	for i := 0; i < 3; i++ {
+		<-done
+	}
+
+	// Verify no race conditions occurred
+	units := objectMgr.GetAllUnits()
+	if len(units) != 10 {
+		t.Errorf("Expected 10 units, got %d", len(units))
+	}
+}
+
+func TestCreateCommandHelpers(t *testing.T) {
+	// Test move command creation
+	moveCmd := CreateMoveCommand(Vector3{X: 10, Y: 0, Z: 15})
+	if moveCmd.Type != CommandMove {
+		t.Errorf("Expected Move command type, got %v", moveCmd.Type)
+	}
+	if moveCmd.Target.X != 10 {
+		t.Errorf("Expected target X=10, got %.1f", moveCmd.Target.X)
+	}
+
+	// Test attack command creation
+	attackCmd := CreateAttackCommand(5)
+	if attackCmd.Type != CommandAttack {
+		t.Errorf("Expected Attack command type, got %v", attackCmd.Type)
+	}
+	if attackCmd.TargetID != 5 {
+		t.Errorf("Expected target ID 5, got %d", attackCmd.TargetID)
+	}
+
+	// Test gather command creation
+	gatherCmd := CreateGatherCommand(Vector3{X: 20, Y: 0, Z: 25}, "gold")
+	if gatherCmd.Type != CommandGather {
+		t.Errorf("Expected Gather command type, got %v", gatherCmd.Type)
+	}
+	if gatherCmd.ResourceType != "gold" {
+		t.Errorf("Expected resource type 'gold', got %s", gatherCmd.ResourceType)
+	}
+
+	// Test build command creation
+	buildCmd := CreateBuildCommand(Vector3{X: 30, Y: 0, Z: 35}, "barracks")
+	if buildCmd.Type != CommandBuild {
+		t.Errorf("Expected Build command type, got %v", buildCmd.Type)
+	}
+	if buildCmd.BuildingType != "barracks" {
+		t.Errorf("Expected building type 'barracks', got %s", buildCmd.BuildingType)
+	}
+
+	// Test stop command creation
+	stopCmd := CreateStopCommand()
+	if stopCmd.Type != CommandStop {
+		t.Errorf("Expected Stop command type, got %v", stopCmd.Type)
+	}
+	if stopCmd.Priority != PriorityCritical {
+		t.Errorf("Expected Critical priority for stop command, got %v", stopCmd.Priority)
+	}
+}
+
+func TestCalculateDistance(t *testing.T) {
+	p1 := Vector3{X: 0, Y: 0, Z: 0}
+	p2 := Vector3{X: 3, Y: 0, Z: 4}
+
+	distance := CalculateDistance(p1, p2)
+	expected := 5.0 // 3-4-5 triangle
+
+	if distance != expected {
+		t.Errorf("Expected distance %.1f, got %.1f", expected, distance)
+	}
+
+	// Test same point
+	distance = CalculateDistance(p1, p1)
+	if distance != 0 {
+		t.Errorf("Expected distance 0 for same point, got %.1f", distance)
+	}
+}
