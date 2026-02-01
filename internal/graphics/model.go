@@ -119,64 +119,61 @@ func NewModelFromG3D(g3dModel *formats.G3DModel) (*Model, error) {
 
 // extractG3DVertexData extracts vertex and index data from a G3D mesh
 func extractG3DVertexData(mesh *formats.G3DMesh) ([]Vertex, []uint32, error) {
-	// Note: Currently the G3D parser skips vertex data (from Phase 1.4)
-	// We need to implement actual vertex data reading from the G3D binary format
+	// NOW USING REAL G3D VERTEX DATA! Complete parser provides actual geometry.
 
-	// For now, create a simple test cube to verify the rendering pipeline works
-	// This will be replaced with actual G3D vertex data extraction
-
-	vertices := []Vertex{
-		// Front face
-		{mgl32.Vec3{-1.0, -1.0,  1.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec2{0.0, 0.0}}, // Bottom-left
-		{mgl32.Vec3{ 1.0, -1.0,  1.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec2{1.0, 0.0}}, // Bottom-right
-		{mgl32.Vec3{ 1.0,  1.0,  1.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec2{1.0, 1.0}}, // Top-right
-		{mgl32.Vec3{-1.0,  1.0,  1.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec2{0.0, 1.0}}, // Top-left
-
-		// Back face
-		{mgl32.Vec3{-1.0, -1.0, -1.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec2{1.0, 0.0}}, // Bottom-left
-		{mgl32.Vec3{ 1.0, -1.0, -1.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec2{0.0, 0.0}}, // Bottom-right
-		{mgl32.Vec3{ 1.0,  1.0, -1.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec2{0.0, 1.0}}, // Top-right
-		{mgl32.Vec3{-1.0,  1.0, -1.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec2{1.0, 1.0}}, // Top-left
-
-		// Top face
-		{mgl32.Vec3{-1.0,  1.0, -1.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec2{0.0, 1.0}},
-		{mgl32.Vec3{ 1.0,  1.0, -1.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec2{1.0, 1.0}},
-		{mgl32.Vec3{ 1.0,  1.0,  1.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec2{1.0, 0.0}},
-		{mgl32.Vec3{-1.0,  1.0,  1.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec2{0.0, 0.0}},
-
-		// Bottom face
-		{mgl32.Vec3{-1.0, -1.0, -1.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec2{1.0, 1.0}},
-		{mgl32.Vec3{ 1.0, -1.0, -1.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec2{0.0, 1.0}},
-		{mgl32.Vec3{ 1.0, -1.0,  1.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec2{0.0, 0.0}},
-		{mgl32.Vec3{-1.0, -1.0,  1.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec2{1.0, 0.0}},
-
-		// Right face
-		{mgl32.Vec3{ 1.0, -1.0, -1.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec2{1.0, 0.0}},
-		{mgl32.Vec3{ 1.0,  1.0, -1.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec2{1.0, 1.0}},
-		{mgl32.Vec3{ 1.0,  1.0,  1.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec2{0.0, 1.0}},
-		{mgl32.Vec3{ 1.0, -1.0,  1.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec2{0.0, 0.0}},
-
-		// Left face
-		{mgl32.Vec3{-1.0, -1.0, -1.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec2{0.0, 0.0}},
-		{mgl32.Vec3{-1.0,  1.0, -1.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec2{0.0, 1.0}},
-		{mgl32.Vec3{-1.0,  1.0,  1.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec2{1.0, 1.0}},
-		{mgl32.Vec3{-1.0, -1.0,  1.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec2{1.0, 0.0}},
+	// Validate that we have vertex data
+	if len(mesh.Vertices) == 0 {
+		return nil, nil, fmt.Errorf("mesh has no vertex data: %s", mesh.Name)
 	}
 
-	indices := []uint32{
-		// Front face
-		0, 1, 2,   2, 3, 0,
-		// Back face
-		4, 5, 6,   6, 7, 4,
-		// Top face
-		8, 9, 10,  10, 11, 8,
-		// Bottom face
-		12, 13, 14, 14, 15, 12,
-		// Right face
-		16, 17, 18, 18, 19, 16,
-		// Left face
-		20, 21, 22, 22, 23, 20,
+	if len(mesh.Indices) == 0 {
+		return nil, nil, fmt.Errorf("mesh has no index data: %s", mesh.Name)
 	}
+
+	// For now, render only the first frame (frame 0) for non-animated models
+	// TODO: Add animation support later
+	frameToRender := 0
+	vertexCount := int(mesh.Header.VertexCount)
+
+	if frameToRender >= int(mesh.Header.FrameCount) {
+		frameToRender = 0 // Fallback to first frame
+	}
+
+	// Calculate offset for the frame we want to render
+	frameOffset := frameToRender * vertexCount
+
+	// Extract vertices for the current frame
+	vertices := make([]Vertex, vertexCount)
+
+	for i := 0; i < vertexCount; i++ {
+		vertexIndex := frameOffset + i
+
+		// Validate array bounds
+		if vertexIndex >= len(mesh.Vertices) || vertexIndex >= len(mesh.Normals) {
+			return nil, nil, fmt.Errorf("vertex index out of bounds: %d >= %d or %d",
+				vertexIndex, len(mesh.Vertices), len(mesh.Normals))
+		}
+
+		// Convert from G3D Vec3f to mathgl Vec3
+		g3dVertex := mesh.Vertices[vertexIndex]
+		g3dNormal := mesh.Normals[vertexIndex]
+
+		vertices[i].Position = mgl32.Vec3{g3dVertex.X, g3dVertex.Y, g3dVertex.Z}
+		vertices[i].Normal = mgl32.Vec3{g3dNormal.X, g3dNormal.Y, g3dNormal.Z}
+
+		// Texture coordinates (not frame-dependent)
+		if i < len(mesh.TexCoords) {
+			g3dTexCoord := mesh.TexCoords[i]
+			vertices[i].TexCoord = mgl32.Vec2{g3dTexCoord.X, g3dTexCoord.Y}
+		} else {
+			// Default texture coordinates if not available
+			vertices[i].TexCoord = mgl32.Vec2{0.0, 0.0}
+		}
+	}
+
+	// Copy indices directly - they reference the vertices in the current frame
+	indices := make([]uint32, len(mesh.Indices))
+	copy(indices, mesh.Indices)
 
 	return vertices, indices, nil
 }
@@ -362,7 +359,7 @@ func (m *Model) Render(shaderName string, shaderInterface ShaderInterface) error
 	}
 
 	// Set uniforms for this model
-	err := shaderInterface.SetUniformMat4(shaderName, "model", m.GetModelMatrix())
+	err := shaderInterface.SetUniformMat4(shaderName, "uModel", m.GetModelMatrix())
 	if err != nil {
 		return fmt.Errorf("failed to set model matrix: %w", err)
 	}
@@ -376,7 +373,7 @@ func (m *Model) Render(shaderName string, shaderInterface ShaderInterface) error
 		0, 0, 0, 1,
 	}
 
-	err = shaderInterface.SetUniformMat4(shaderName, "normalMatrix", normalMatrix4)
+	err = shaderInterface.SetUniformMat4(shaderName, "uNormalMatrix", normalMatrix4)
 	if err != nil {
 		return fmt.Errorf("failed to set normal matrix: %w", err)
 	}

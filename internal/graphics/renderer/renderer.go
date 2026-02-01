@@ -3,14 +3,17 @@ package renderer
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"teraglest/internal/data"
 	"teraglest/internal/engine"
 	"teraglest/internal/graphics"
+	"teraglest/pkg/formats"
 
 	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // GPUTexture represents a texture uploaded to the GPU
@@ -45,6 +48,10 @@ type Renderer struct {
 	// GPU resource caches
 	modelCache   map[string]*GPUModel   // Path -> GPU model
 	textureCache map[string]*GPUTexture // Path -> GPU texture
+
+	// Placeholder rendering
+	cubeVAO     uint32 // VAO for rendering unit placeholders
+	basicShader uint32 // Basic shader for placeholder rendering
 
 	// Rendering statistics
 	frameCount    uint64
@@ -388,6 +395,137 @@ func (r *Renderer) renderWorldObjects(world *engine.World) error {
 	return nil
 }
 
+// initializeCubeGeometry creates VAO/VBO for rendering simple cube placeholders
+func (r *Renderer) initializeCubeGeometry() {
+	// Simple cube vertices (position only)
+	vertices := []float32{
+		// Front face
+		-0.5, -0.5,  0.5,   0.5, -0.5,  0.5,   0.5,  0.5,  0.5,  -0.5,  0.5,  0.5,
+		// Back face
+		-0.5, -0.5, -0.5,  -0.5,  0.5, -0.5,   0.5,  0.5, -0.5,   0.5, -0.5, -0.5,
+	}
+
+	// Cube indices (2 triangles per face, 6 faces)
+	indices := []uint32{
+		// Front face
+		0, 1, 2,   2, 3, 0,
+		// Back face
+		4, 5, 6,   6, 7, 4,
+		// Left face
+		4, 0, 3,   3, 5, 4,
+		// Right face
+		1, 7, 6,   6, 2, 1,
+		// Top face
+		3, 2, 6,   6, 5, 3,
+		// Bottom face
+		4, 7, 1,   1, 0, 4,
+	}
+
+	// Generate and bind VAO
+	gl.GenVertexArrays(1, &r.cubeVAO)
+	gl.BindVertexArray(r.cubeVAO)
+
+	// Generate and bind VBO
+	var vbo uint32
+	gl.GenBuffers(1, &vbo)
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
+	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.STATIC_DRAW)
+
+	// Generate and bind EBO
+	var ebo uint32
+	gl.GenBuffers(1, &ebo)
+	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo)
+	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*4, gl.Ptr(indices), gl.STATIC_DRAW)
+
+	// Configure vertex attributes (position)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 3*4, gl.PtrOffset(0))
+	gl.EnableVertexAttribArray(0)
+
+	// Unbind VAO
+	gl.BindVertexArray(0)
+
+	log.Printf("✅ Cube geometry initialized for unit placeholders")
+}
+
+// initializeBasicShader creates a simple shader for rendering colored placeholders
+func (r *Renderer) initializeBasicShader() error {
+	// Simple vertex shader source
+	vertexShaderSource := `#version 330 core
+layout (location = 0) in vec3 aPos;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+void main() {
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
+}` + "\x00"
+
+	// Simple fragment shader source
+	fragmentShaderSource := `#version 330 core
+uniform vec3 color;
+out vec4 FragColor;
+
+void main() {
+    FragColor = vec4(color, 1.0);
+}` + "\x00"
+
+	// Compile vertex shader
+	vertexShader, err := compileShader(vertexShaderSource, gl.VERTEX_SHADER)
+	if err != nil {
+		return fmt.Errorf("vertex shader compilation failed: %v", err)
+	}
+	defer gl.DeleteShader(vertexShader)
+
+	// Compile fragment shader
+	fragmentShader, err := compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER)
+	if err != nil {
+		return fmt.Errorf("fragment shader compilation failed: %v", err)
+	}
+	defer gl.DeleteShader(fragmentShader)
+
+	// Create shader program
+	r.basicShader = gl.CreateProgram()
+	gl.AttachShader(r.basicShader, vertexShader)
+	gl.AttachShader(r.basicShader, fragmentShader)
+	gl.LinkProgram(r.basicShader)
+
+	// Check linking status
+	var status int32
+	gl.GetProgramiv(r.basicShader, gl.LINK_STATUS, &status)
+	if status == gl.FALSE {
+		var logLength int32
+		gl.GetProgramiv(r.basicShader, gl.INFO_LOG_LENGTH, &logLength)
+		log := strings.Repeat("\x00", int(logLength+1))
+		gl.GetProgramInfoLog(r.basicShader, logLength, nil, gl.Str(log))
+		return fmt.Errorf("program linking failed: %v", log)
+	}
+
+	log.Printf("✅ Basic shader initialized for unit placeholders")
+	return nil
+}
+
+// compileShader compiles a shader from source
+func compileShader(source string, shaderType uint32) (uint32, error) {
+	shader := gl.CreateShader(shaderType)
+	csource, free := gl.Strs(source)
+	gl.ShaderSource(shader, 1, csource, nil)
+	free()
+	gl.CompileShader(shader)
+
+	var status int32
+	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &status)
+	if status == gl.FALSE {
+		var logLength int32
+		gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, &logLength)
+		log := strings.Repeat("\x00", int(logLength+1))
+		gl.GetShaderInfoLog(shader, logLength, nil, gl.Str(log))
+		return 0, fmt.Errorf("shader compilation failed: %v", log)
+	}
+
+	return shader, nil
+}
+
 // GetCamera returns the renderer's camera for external manipulation
 func (r *Renderer) GetCamera() *Camera {
 	return r.camera
@@ -426,13 +564,13 @@ func (r *Renderer) RenderModel(model *graphics.Model) error {
 	}
 
 	// Ensure we're using the model shader
-	err := r.shaderMgr.UseShader("model")
+	err := r.shaderMgr.UseShader("advanced_model")
 	if err != nil {
 		return fmt.Errorf("failed to use model shader: %w", err)
 	}
 
 	// Render the model (it will set its own model matrix and material properties)
-	err = model.Render("model", r.shaderMgr)
+	err = model.Render("advanced_model", r.shaderMgr)
 	if err != nil {
 		return fmt.Errorf("failed to render model: %w", err)
 	}
@@ -622,7 +760,7 @@ func (r *Renderer) renderUnits(world *engine.World) error {
 				continue
 			}
 
-			err := r.renderUnit(unit)
+			err := r.renderUnitWithFaction(unit, player.FactionName)
 			if err != nil {
 				// Log error but continue rendering other units
 				log.Printf("Warning: Failed to render unit %d: %v", unit.ID, err)
@@ -634,30 +772,138 @@ func (r *Renderer) renderUnits(world *engine.World) error {
 	return nil
 }
 
-// renderUnit renders a single game unit
+// renderUnit renders a single game unit (legacy method, use renderUnitWithFaction)
 func (r *Renderer) renderUnit(unit *engine.GameUnit) error {
-	// Get unit position from game state (TODO: use for transformation)
-	_ = unit.GetPosition()
+	return r.renderUnitWithFaction(unit, "magic") // fallback to magic for backward compatibility
+}
 
-	// For now, try to load a G3D model for this unit type
-	// TODO: Cache loaded models and use proper asset management
-	modelPath := fmt.Sprintf("factions/magic/units/%s/models/%s_standing.g3d", unit.UnitType, unit.UnitType)
+// renderUnitWithFaction renders a single game unit using the correct faction
+func (r *Renderer) renderUnitWithFaction(unit *engine.GameUnit, faction string) error {
+	// Get unit position from game state
+	pos := unit.GetPosition()
 
-	model, err := r.LoadG3DModel(modelPath)
+	// Load G3D model using the CORRECT faction instead of hardcoding "magic"
+	// Try multiple naming patterns for better compatibility
+	var g3dModel *formats.G3DModel
+	var err error
+
+	// Pattern 1: Try with _standing suffix
+	modelPath := fmt.Sprintf("factions/%s/units/%s/models/%s_standing.g3d", faction, unit.UnitType, unit.UnitType)
+	log.Printf("🔍 DEBUG: Attempting to load model: %s for unit %s (faction: %s)", modelPath, unit.UnitType, faction)
+	g3dModel, err = r.assetMgr.LoadG3DModel(modelPath)
+
 	if err != nil {
-		// If specific model not found, use a default placeholder
-		// This prevents errors when rendering units without proper models
-		return nil // Skip rendering rather than error
+		// Pattern 2: Fallback - try without _standing suffix
+		modelPath = fmt.Sprintf("factions/%s/units/%s/models/%s.g3d", faction, unit.UnitType, unit.UnitType)
+		log.Printf("🔄 Fallback: Attempting model without _standing: %s", modelPath)
+		g3dModel, err = r.assetMgr.LoadG3DModel(modelPath)
+
+		if err != nil {
+			// Model loading failed with both patterns - render placeholder
+			log.Printf("❌ BOTH MODEL PATTERNS FAILED for unit %s:", unit.UnitType)
+			log.Printf("   Pattern 1 error: %v", err)
+			log.Printf("   Pattern 2 error: %v", err)
+			log.Printf("   Rendering placeholder at (%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z)
+
+			// Use the terrain rendering to draw a simple colored indicator
+			// This ensures units are ALWAYS visible even without proper models
+			return r.renderUnitPlaceholder(unit, pos)
+		} else {
+			log.Printf("✅ SUCCESS: Loaded model with fallback pattern: %s", modelPath)
+		}
+	} else {
+		log.Printf("✅ SUCCESS: Loaded model with primary pattern: %s", modelPath)
 	}
+
+	// Convert G3DModel to our internal Model format for rendering (using ModelManager's logic)
+	log.Printf("🔄 Converting G3D model to internal format for unit %s...", unit.UnitType)
+	model, err := graphics.NewModelFromG3D(g3dModel)
+	if err != nil {
+		log.Printf("❌ CONVERSION FAILED: G3D to internal model conversion failed for unit %s: %v", unit.UnitType, err)
+		return r.renderUnitPlaceholder(unit, pos)
+	}
+	log.Printf("✅ CONVERSION SUCCESS: G3D model converted successfully for unit %s", unit.UnitType)
 
 	// Create transformation matrix for unit position
 	// TODO: Add rotation based on unit facing direction
 	// TODO: Add animation state based on unit.State (moving, attacking, etc.)
 
+	log.Printf("🎨 About to render model for unit %s at position (%.1f, %.1f, %.1f)...", unit.UnitType, pos.X, pos.Y, pos.Z)
 	err = r.RenderModel(model)
 	if err != nil {
-		return fmt.Errorf("failed to render unit model: %w", err)
+		// If model rendering fails, fallback to placeholder
+		log.Printf("❌ RENDER FAILED: OpenGL rendering failed for unit %d (%s): %v", unit.ID, unit.UnitType, err)
+		return r.renderUnitPlaceholder(unit, pos)
 	}
+	log.Printf("✅ RENDER SUCCESS: Model rendered successfully for unit %s", unit.UnitType)
+
+	return nil
+}
+
+// renderUnitPlaceholder renders a simple visible placeholder for units without models
+func (r *Renderer) renderUnitPlaceholder(unit *engine.GameUnit, pos engine.Vector3) error {
+	// Create a simple colored indicator that's definitely visible
+	log.Printf("🔲 Rendering placeholder for unit %d ('%s') at (%.1f, %.1f, %.1f)",
+		unit.ID, unit.UnitType, pos.X, pos.Y, pos.Z)
+
+	// Choose color based on unit type for visual distinction
+	var color [3]float32
+	switch unit.UnitType {
+	case "worker":
+		color = [3]float32{0.8, 0.8, 0.2} // Yellow for workers
+	case "guard", "archer":
+		color = [3]float32{0.2, 0.8, 0.2} // Green for military
+	case "initiate", "battlemage", "daemon":
+		color = [3]float32{0.8, 0.2, 0.8} // Purple for magic
+	default:
+		color = [3]float32{0.5, 0.5, 0.5} // Gray for unknown
+	}
+
+	// Render a simple colored cube using the terrain shader
+	// This ensures maximum compatibility with existing rendering pipeline
+	return r.renderColoredCube(pos, color, 1.0) // 1.0 unit size
+}
+
+// renderColoredCube renders a simple colored cube at the given position
+func (r *Renderer) renderColoredCube(pos engine.Vector3, color [3]float32, size float32) error {
+	// Initialize basic shader if not done yet
+	if r.basicShader == 0 {
+		err := r.initializeBasicShader()
+		if err != nil {
+			return fmt.Errorf("failed to initialize basic shader: %v", err)
+		}
+	}
+
+	// Use the basic shader to render a simple cube
+	gl.UseProgram(r.basicShader)
+
+	// Set up transformation matrix for the cube position
+	translation := mgl32.Translate3D(float32(pos.X), float32(pos.Y), float32(pos.Z))
+	scale := mgl32.Scale3D(size, size, size)
+	modelMatrix := translation.Mul4(scale)
+
+	// Set uniforms for the basic shader
+	modelLoc := gl.GetUniformLocation(r.basicShader, gl.Str("model\x00"))
+	gl.UniformMatrix4fv(modelLoc, 1, false, &modelMatrix[0])
+
+	viewLoc := gl.GetUniformLocation(r.basicShader, gl.Str("view\x00"))
+	gl.UniformMatrix4fv(viewLoc, 1, false, &r.camera.ViewMatrix[0])
+
+	projLoc := gl.GetUniformLocation(r.basicShader, gl.Str("projection\x00"))
+	gl.UniformMatrix4fv(projLoc, 1, false, &r.camera.ProjectionMatrix[0])
+
+	// Set color uniform
+	colorLoc := gl.GetUniformLocation(r.basicShader, gl.Str("color\x00"))
+	gl.Uniform3f(colorLoc, color[0], color[1], color[2])
+
+	// Render a simple cube (8 vertices, 12 triangles)
+	if r.cubeVAO == 0 {
+		r.initializeCubeGeometry()
+	}
+
+	gl.BindVertexArray(r.cubeVAO)
+	gl.DrawElements(gl.TRIANGLES, 36, gl.UNSIGNED_INT, gl.PtrOffset(0))
+	gl.BindVertexArray(0)
 
 	return nil
 }
