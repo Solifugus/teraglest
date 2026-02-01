@@ -29,53 +29,102 @@ func NewUnitManager(world *World) *UnitManager {
 
 // CreateUnit creates a new game unit
 func (um *UnitManager) CreateUnit(playerID int, unitType string, position Vector3, unitDef *data.UnitDefinition) (*GameUnit, error) {
+	// DEBUG: Check parameters
+	if unitDef == nil {
+		return nil, fmt.Errorf("DEBUG: unitDef is nil")
+	}
+	if um.world == nil {
+		return nil, fmt.Errorf("DEBUG: um.world is nil")
+	}
+
 	um.mutex.Lock()
 	defer um.mutex.Unlock()
 
 	unitID := um.nextID
 	um.nextID++
 
+	// DEBUG: Add logging to see where panic occurs
+	fmt.Printf("DEBUG: Creating unit, accessing unitDef.Name: %s\n", unitDef.Name)
+	fmt.Printf("DEBUG: Calling WorldToGrid with position (%.1f,%.1f,%.1f) and tileSize %.1f\n",
+		position.X, position.Y, position.Z, um.world.tileSize)
+
+	gridPos := WorldToGrid(position, um.world.tileSize)
+	fmt.Printf("DEBUG: WorldToGrid succeeded, result: (%d,%d)\n", gridPos.Grid.X, gridPos.Grid.Y)
+
+	// DEBUG: Access fields individually to isolate the panic
+	fmt.Printf("DEBUG: About to access unitDef.Name\n")
+	unitName := unitDef.Name
+	fmt.Printf("DEBUG: unitName = %s\n", unitName)
+
+	fmt.Printf("DEBUG: About to access unitDef.Unit.Parameters.MaxHP.Value\n")
+	maxHP := unitDef.Unit.Parameters.MaxHP.Value
+	fmt.Printf("DEBUG: maxHP = %d\n", maxHP)
+
+	fmt.Printf("DEBUG: About to access unitDef.Unit.Parameters.Armor.Value\n")
+	armor := unitDef.Unit.Parameters.Armor.Value
+	fmt.Printf("DEBUG: armor = %d\n", armor)
+
+	fmt.Printf("DEBUG: About to create GameUnit struct\n")
+
+	// DEBUG: Create fields step by step to isolate the issue
+	fmt.Printf("DEBUG: Creating CommandQueue slice\n")
+	commandQueue := make([]UnitCommand, 0)
+	fmt.Printf("DEBUG: Creating CarriedResources map\n")
+	carriedRes := make(map[string]int)
+	fmt.Printf("DEBUG: Creating GatherRate map\n")
+	gatherRate := map[string]float32{"wood": 10.0, "stone": 8.0, "gold": 12.0}
+
+	fmt.Printf("DEBUG: About to allocate GameUnit struct\n")
 	unit := &GameUnit{
 		ID:           unitID,
 		PlayerID:     playerID,
 		UnitType:     unitType,
-		Name:         unitDef.Name,
+		Name:         unitName,
 		Position:     position,
-		GridPos:      WorldToGrid(position, um.world.tileSize), // Initialize grid position
-		Health:       unitDef.Unit.Parameters.MaxHP.Value,
-		MaxHealth:    unitDef.Unit.Parameters.MaxHP.Value,
-		Armor:        unitDef.Unit.Parameters.Armor.Value,
-		Energy:       100, // Default energy
+		GridPos:      gridPos,
+		Health:       maxHP,
+		MaxHealth:    maxHP,
+		Armor:        armor,
+		Energy:       100,
 		MaxEnergy:    100,
 		State:        UnitStateIdle,
 		CreationTime: time.Now(),
 		LastUpdate:   time.Now(),
-		CommandQueue: make([]UnitCommand, 0),
-		Speed:        2.0, // Default movement speed
-		CarriedResources: make(map[string]int),
-		GatherRate:   map[string]float32{"wood": 10.0, "stone": 8.0, "gold": 12.0},
+		CommandQueue: commandQueue,
+		Speed:        2.0,
+		CarriedResources: carriedRes,
+		GatherRate:   gatherRate,
 		UnitDef:      unitDef,
 	}
+	fmt.Printf("DEBUG: GameUnit struct created successfully\n")
 
 	// Set combat stats based on unit definition
+	fmt.Printf("DEBUG: About to access unitDef.Unit.Parameters.ResourceRequirements\n")
 	if len(unitDef.Unit.Parameters.ResourceRequirements) > 0 {
 		// Infer combat stats from cost and armor
 		unit.AttackDamage = 10 + unit.Armor/2 // Simple damage calculation
 		unit.AttackRange = 1.0 + float32(unit.Armor)/10.0 // Range based on armor
 		unit.AttackSpeed = 1.0 // Attacks per second
 	}
+	fmt.Printf("DEBUG: Combat stats processing complete\n")
 
 	// Store unit
+	fmt.Printf("DEBUG: About to store unit in um.units map\n")
 	um.units[unitID] = unit
+	fmt.Printf("DEBUG: Unit stored in um.units\n")
 
 	// Index by player
+	fmt.Printf("DEBUG: About to index by player\n")
 	if um.unitsByPlayer[playerID] == nil {
 		um.unitsByPlayer[playerID] = make(map[int]*GameUnit)
 	}
 	um.unitsByPlayer[playerID][unitID] = unit
+	fmt.Printf("DEBUG: Unit indexed by player\n")
 
 	// Mark grid position as occupied
+	fmt.Printf("DEBUG: About to call SetOccupied\n")
 	um.world.SetOccupied(unit.GridPos.Grid, true)
+	fmt.Printf("DEBUG: SetOccupied completed\n")
 
 	return unit, nil
 }

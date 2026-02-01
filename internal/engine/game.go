@@ -297,10 +297,9 @@ func (g *Game) GetStats() GameStats {
 	return stats
 }
 
-// GetWorld returns the game world (thread-safe access should use world methods)
+// GetWorld returns the game world (world pointer is immutable after creation)
 func (g *Game) GetWorld() *World {
-	g.mutex.RLock()
-	defer g.mutex.RUnlock()
+	// No lock needed - world pointer is set once during creation and never changes
 	return g.world
 }
 

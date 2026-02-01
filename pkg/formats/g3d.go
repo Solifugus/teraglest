@@ -8,11 +8,16 @@ import (
 	"os"
 )
 
+// Complete G3D file format implementation with vertex data parsing
+// Based on MegaGlest C++ source code analysis
+
 // G3D file format constants
 const (
-	G3DVersion2 = 2
-	G3DVersion3 = 3
-	G3DVersion4 = 4
+	G3DVersion2   = 2
+	G3DVersion3   = 3
+	G3DVersion4   = 4
+	MapPathSize   = 64
+	MeshNameSize  = 64
 )
 
 // G3DMeshType represents the mesh type
@@ -58,22 +63,33 @@ type G3DMeshHeader struct {
 	Textures       uint32     // Texture type flags
 }
 
-// G3DMesh represents a complete mesh with all its data
+// G3DMesh represents a complete mesh with ALL its data INCLUDING vertex data
 type G3DMesh struct {
 	Header       G3DMeshHeader
-	TextureNames []string // Texture file names (simplified)
-	// Note: For Phase 1.4, we focus on header parsing and basic structure
-	// Vertex data parsing can be added in later phases when needed for rendering
+	TextureNames []string // Texture file names
+
+	// ACTUAL VERTEX DATA - This was missing in the original!
+	Vertices   []Vec3f  // frameCount * vertexCount vertices
+	Normals    []Vec3f  // frameCount * vertexCount normals
+	TexCoords  []Vec2f  // vertexCount texture coordinates
+	Indices    []uint32 // indexCount triangle indices
+
+	// Derived properties
+	Name         string  // Name as string
+	TwoSided     bool    // Two-sided mesh flag
+	CustomColor  bool    // Custom color flag
+	NoSelect     bool    // No selection flag
+	Glow         bool    // Glow effect flag
 }
 
-// G3DModel represents a complete G3D model file
+// G3DModel represents a complete G3D model file with full vertex data
 type G3DModel struct {
 	FileHeader  G3DFileHeader
 	ModelHeader G3DModelHeader
 	Meshes      []G3DMesh
 }
 
-// LoadG3D loads and parses a G3D model file
+// LoadG3D loads and parses a G3D model file with COMPLETE vertex data parsing
 func LoadG3D(filepath string) (*G3DModel, error) {
 	// Open the file
 	file, err := os.Open(filepath)
@@ -81,12 +97,6 @@ func LoadG3D(filepath string) (*G3DModel, error) {
 		return nil, fmt.Errorf("failed to open G3D file %s: %w", filepath, err)
 	}
 	defer file.Close()
-
-	// Get file size for validation
-	_, err = file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat G3D file: %w", err)
-	}
 
 	// Read entire file into memory for binary parsing
 	data, err := io.ReadAll(file)
@@ -107,13 +117,13 @@ func LoadG3D(filepath string) (*G3DModel, error) {
 		return nil, fmt.Errorf("failed to read G3D file header: %w", err)
 	}
 
-	// Validate file signature
+	// Validate file header
 	if string(model.FileHeader.ID[:]) != "G3D" {
-		return nil, fmt.Errorf("invalid G3D signature: %s", string(model.FileHeader.ID[:]))
+		return nil, fmt.Errorf("invalid G3D file: expected 'G3D', got '%s'", string(model.FileHeader.ID[:]))
 	}
 
-	// Validate version
-	if model.FileHeader.Version < G3DVersion2 || model.FileHeader.Version > G3DVersion4 {
+	// Check version support
+	if model.FileHeader.Version < 2 || model.FileHeader.Version > 4 {
 		return nil, fmt.Errorf("unsupported G3D version: %d", model.FileHeader.Version)
 	}
 
@@ -123,17 +133,14 @@ func LoadG3D(filepath string) (*G3DModel, error) {
 		return nil, fmt.Errorf("failed to read G3D model header: %w", err)
 	}
 
-	// Validate mesh type
-	if model.ModelHeader.Type != MorphMesh {
-		return nil, fmt.Errorf("unsupported mesh type: %d", model.ModelHeader.Type)
-	}
-
-	// Read mesh headers (Phase 1.4 focus: header parsing for mesh/vertex counts)
+	// Initialize meshes array
 	model.Meshes = make([]G3DMesh, model.ModelHeader.MeshCount)
-	for i := uint16(0); i < model.ModelHeader.MeshCount; i++ {
-		mesh, err := readG3DMeshHeader(reader)
+
+	// Read each mesh with COMPLETE data including vertex arrays
+	for i := 0; i < int(model.ModelHeader.MeshCount); i++ {
+		mesh, err := readG3DMeshComplete(reader, model.FileHeader.Version)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read mesh %d header: %w", i, err)
+			return nil, fmt.Errorf("failed to read mesh %d: %w", i, err)
 		}
 		model.Meshes[i] = *mesh
 	}
@@ -141,8 +148,8 @@ func LoadG3D(filepath string) (*G3DModel, error) {
 	return model, nil
 }
 
-// readG3DMeshHeader reads just the mesh header and texture names (simplified for Phase 1.4)
-func readG3DMeshHeader(reader *bytes.Reader) (*G3DMesh, error) {
+// readG3DMeshComplete reads a complete mesh including ALL vertex data
+func readG3DMeshComplete(reader *bytes.Reader, version uint8) (*G3DMesh, error) {
 	mesh := &G3DMesh{}
 
 	// Read mesh header
@@ -151,63 +158,90 @@ func readG3DMeshHeader(reader *bytes.Reader) (*G3DMesh, error) {
 		return nil, fmt.Errorf("failed to read mesh header: %w", err)
 	}
 
-	// Read texture names if texture flags indicate they exist
-	mesh.TextureNames = make([]string, 0, 1)
-	if mesh.Header.Textures&1 != 0 { // Diffuse texture flag
-		texName, err := readNullTerminatedString(reader)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read texture name: %w", err)
+	// Parse name from header
+	mesh.Name = string(bytes.TrimRight(mesh.Header.Name[:], "\x00"))
+
+	// Parse property flags based on MegaGlest implementation
+	mesh.TwoSided = (mesh.Header.Properties & (1 << 0)) != 0    // mpfTwoSided
+	mesh.CustomColor = (mesh.Header.Properties & (1 << 1)) != 0 // mpfCustomColor
+	mesh.NoSelect = (mesh.Header.Properties & (1 << 2)) != 0    // mpfNoSelect
+	mesh.Glow = (mesh.Header.Properties & (1 << 3)) != 0        // mpfGlow
+
+	// Read texture names if textures are present
+	textureFlag := uint32(1)
+	maxTextures := 8 // meshTextureCount from MegaGlest source
+	for i := 0; i < maxTextures; i++ {
+		if mesh.Header.Textures & textureFlag != 0 {
+			// Read texture path
+			texturePath := make([]byte, MapPathSize)
+			_, err := reader.Read(texturePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read texture path %d: %w", i, err)
+			}
+
+			// Convert to string and store
+			textureStr := string(bytes.TrimRight(texturePath, "\x00"))
+			mesh.TextureNames = append(mesh.TextureNames, textureStr)
 		}
-		mesh.TextureNames = append(mesh.TextureNames, texName)
+		textureFlag <<= 1
 	}
 
-	// For Phase 1.4, we skip the vertex data parsing to focus on basic structure
-	// The file position is advanced past the mesh header and texture names
-	// Full vertex parsing will be implemented in later phases when needed for rendering
+	// NOW READ THE ACTUAL VERTEX DATA - This was the critical missing piece!
 
-	// Calculate and skip vertex data section
-	frameSize := mesh.Header.VertexCount * (3 + 3 + 2) * 4 // vertex(3) + normal(3) + texcoord(2) * sizeof(float32)
-	vertexDataSize := int64(mesh.Header.FrameCount) * int64(frameSize)
-	indexDataSize := int64(mesh.Header.IndexCount * 4) // sizeof(uint32)
-	totalSkipSize := vertexDataSize + indexDataSize
+	frameCount := mesh.Header.FrameCount
+	vertexCount := mesh.Header.VertexCount
+	indexCount := mesh.Header.IndexCount
 
-	// Skip the vertex and index data for now
-	_, err = reader.Seek(int64(reader.Len())-reader.Size()+totalSkipSize, io.SeekCurrent)
-	if err != nil {
-		// If seek fails, this mesh might have different structure
-		// We'll consider this mesh parsed successfully but with limited data
+	// Read vertices (frameCount * vertexCount) - positions for all animation frames
+	totalVertices := frameCount * vertexCount
+	if totalVertices > 0 {
+		mesh.Vertices = make([]Vec3f, totalVertices)
+		err = binary.Read(reader, binary.LittleEndian, mesh.Vertices)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read vertices: %w", err)
+		}
+	}
+
+	// Read normals (frameCount * vertexCount) - normals for all animation frames
+	if totalVertices > 0 {
+		mesh.Normals = make([]Vec3f, totalVertices)
+		err = binary.Read(reader, binary.LittleEndian, mesh.Normals)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read normals: %w", err)
+		}
+	}
+
+	// Read texture coordinates (vertexCount) - only if textures are present
+	if mesh.Header.Textures != 0 && vertexCount > 0 {
+		mesh.TexCoords = make([]Vec2f, vertexCount)
+		err = binary.Read(reader, binary.LittleEndian, mesh.TexCoords)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read texture coordinates: %w", err)
+		}
+	}
+
+	// Read indices (indexCount) - triangle indices for rendering
+	if indexCount > 0 {
+		mesh.Indices = make([]uint32, indexCount)
+		err = binary.Read(reader, binary.LittleEndian, mesh.Indices)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read indices: %w", err)
+		}
 	}
 
 	return mesh, nil
 }
 
-// readNullTerminatedString reads a null-terminated string from the binary data
-func readNullTerminatedString(reader *bytes.Reader) (string, error) {
-	var result []byte
-	for {
-		var b byte
-		err := binary.Read(reader, binary.LittleEndian, &b)
-		if err != nil {
-			return "", err
-		}
-		if b == 0 {
-			break
-		}
-		result = append(result, b)
-	}
-	return string(result), nil
-}
+// Helper methods for the complete model
 
-// GetTotalVertexCount returns the total number of vertices across all meshes and frames
 func (model *G3DModel) GetTotalVertexCount() uint32 {
 	total := uint32(0)
 	for _, mesh := range model.Meshes {
-		total += mesh.Header.FrameCount * mesh.Header.VertexCount
+		total += mesh.Header.VertexCount * mesh.Header.FrameCount
 	}
 	return total
 }
 
-// GetTotalTriangleCount returns the total number of triangles across all meshes
 func (model *G3DModel) GetTotalTriangleCount() uint32 {
 	total := uint32(0)
 	for _, mesh := range model.Meshes {
@@ -216,17 +250,15 @@ func (model *G3DModel) GetTotalTriangleCount() uint32 {
 	return total
 }
 
-// HasTextures returns true if the model has any textures
 func (model *G3DModel) HasTextures() bool {
 	for _, mesh := range model.Meshes {
-		if len(mesh.TextureNames) > 0 {
+		if mesh.Header.Textures != 0 {
 			return true
 		}
 	}
 	return false
 }
 
-// IsAnimated returns true if the model has animation frames
 func (model *G3DModel) IsAnimated() bool {
 	for _, mesh := range model.Meshes {
 		if mesh.Header.FrameCount > 1 {
@@ -236,33 +268,24 @@ func (model *G3DModel) IsAnimated() bool {
 	return false
 }
 
-// PrintSummary prints a summary of the G3D model for debugging
+// PrintSummary prints a summary of the complete model
 func (model *G3DModel) PrintSummary() {
 	fmt.Printf("G3D Model Summary:\n")
 	fmt.Printf("  Version: %d\n", model.FileHeader.Version)
-	fmt.Printf("  Mesh Count: %d\n", model.ModelHeader.MeshCount)
-	fmt.Println()
+	fmt.Printf("  Meshes: %d\n", model.ModelHeader.MeshCount)
+	fmt.Printf("  Total Vertices: %d\n", model.GetTotalVertexCount())
+	fmt.Printf("  Total Triangles: %d\n", model.GetTotalTriangleCount())
+	fmt.Printf("  Has Textures: %v\n", model.HasTextures())
+	fmt.Printf("  Is Animated: %v\n", model.IsAnimated())
 
 	for i, mesh := range model.Meshes {
-		// Extract mesh name
-		nameBytes := mesh.Header.Name[:]
-		if nullIndex := bytes.IndexByte(nameBytes, 0); nullIndex != -1 {
-			nameBytes = nameBytes[:nullIndex]
-		}
-
-		fmt.Printf("  Mesh %d: %s\n", i+1, string(nameBytes))
+		fmt.Printf("  Mesh %d: %s\n", i, mesh.Name)
 		fmt.Printf("    Frames: %d\n", mesh.Header.FrameCount)
-		fmt.Printf("    Vertices: %d\n", mesh.Header.VertexCount)
-		fmt.Printf("    Indices: %d (triangles: %d)\n", mesh.Header.IndexCount, mesh.Header.IndexCount/3)
-		fmt.Printf("    Textures: %d\n", len(mesh.TextureNames))
-
-		if len(mesh.TextureNames) > 0 {
-			fmt.Printf("      Texture files: %v\n", mesh.TextureNames)
+		fmt.Printf("    Vertices: %d (loaded: %d)\n", mesh.Header.VertexCount, len(mesh.Vertices))
+		fmt.Printf("    Indices: %d (loaded: %d)\n", mesh.Header.IndexCount, len(mesh.Indices))
+		fmt.Printf("    Textures: %d files\n", len(mesh.TextureNames))
+		for j, texName := range mesh.TextureNames {
+			fmt.Printf("      Texture %d: %s\n", j, texName)
 		}
-
-		fmt.Printf("    Diffuse Color: [%.2f, %.2f, %.2f]\n",
-			mesh.Header.DiffuseColor[0], mesh.Header.DiffuseColor[1], mesh.Header.DiffuseColor[2])
-		fmt.Printf("    Opacity: %.2f\n", mesh.Header.Opacity)
-		fmt.Println()
 	}
 }

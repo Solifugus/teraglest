@@ -241,28 +241,29 @@ func NewWorldFromMap(settings GameSettings, techTree *data.TechTree, assetMgr *d
 
 // Initialize sets up the world state and creates initial players/units
 func (w *World) Initialize() error {
+	// Check if already initialized (with lock)
 	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
 	if w.initialized {
+		w.mutex.Unlock()
 		return fmt.Errorf("world is already initialized")
 	}
+	w.mutex.Unlock()
 
-	// Create human players
+	// Create human players (no lock needed for this)
 	for playerID, factionName := range w.settings.PlayerFactions {
 		if err := w.createPlayer(playerID, factionName, false); err != nil {
 			return fmt.Errorf("failed to create human player %d: %w", playerID, err)
 		}
 	}
 
-	// Create AI players
+	// Create AI players (no lock needed for this)
 	for playerID, factionName := range w.settings.AIFactions {
 		if err := w.createPlayer(playerID, factionName, true); err != nil {
 			return fmt.Errorf("failed to create AI player %d: %w", playerID, err)
 		}
 	}
 
-	// Initialize starting units and resources for each player
+	// Initialize starting units and resources for each player (no world lock needed)
 	for _, player := range w.players {
 		if err := w.initializePlayerStartingState(player); err != nil {
 			return fmt.Errorf("failed to initialize starting state for player %d: %w", player.ID, err)
@@ -272,7 +273,11 @@ func (w *World) Initialize() error {
 	// Generate resource nodes on the map (simplified for now)
 	w.generateResourceNodes()
 
+	// Set initialized flag (with lock)
+	w.mutex.Lock()
 	w.initialized = true
+	w.mutex.Unlock()
+
 	return nil
 }
 
@@ -291,8 +296,8 @@ func (w *World) Update(deltaTime time.Duration) {
 	// Update all game objects through the ObjectManager
 	w.ObjectManager.Update(deltaTime)
 
-	// Process commands after object updates
-	w.commandProcessor.Update(deltaTime)
+	// Process commands after object updates (pass players to avoid nested locking)
+	w.commandProcessor.UpdateWithPlayers(deltaTime, w.players)
 
 	// Update production system (building construction and unit production)
 	if w.productionSys != nil {
@@ -1162,6 +1167,12 @@ func (w *World) SetOccupied(gridPos Vector2i, occupied bool) {
 
 	if !w.isValidGridPosition(gridPos) {
 		return
+	}
+
+	// DEBUG: Check if occupancyGrid is nil
+	if w.occupancyGrid == nil {
+		panic(fmt.Sprintf("CRITICAL: occupancyGrid is nil! World: %dx%d, GridPos: (%d,%d)",
+			w.Width, w.Height, gridPos.X, gridPos.Y))
 	}
 
 	w.occupancyGrid[gridPos.Y][gridPos.X] = occupied

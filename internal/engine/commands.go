@@ -221,6 +221,34 @@ func (cp *CommandProcessor) Update(deltaTime time.Duration) {
 	}
 }
 
+// UpdateWithPlayers processes commands with players already available (avoids nested locking)
+func (cp *CommandProcessor) UpdateWithPlayers(deltaTime time.Duration, players map[int]*Player) {
+	// Process all active unit commands for all players
+	for _, player := range players {
+		// Get units for this player
+		playerUnits := cp.world.ObjectManager.GetUnitsForPlayer(player.ID)
+		for _, unit := range playerUnits {
+			// Process health regeneration for living units
+			if unit.IsAlive() {
+				cp.combatSystem.RegenerateHealth(unit, deltaTime)
+			}
+
+			// Process active commands
+			if unit.CurrentCommand != nil {
+				cp.ProcessCommand(unit, unit.CurrentCommand, deltaTime)
+			}
+			// Process command queue progression
+			unit.processCommandQueue()
+		}
+
+		// Process building commands for this player
+		playerBuildings := cp.world.ObjectManager.GetBuildingsForPlayer(player.ID)
+		for _, building := range playerBuildings {
+			cp.processBuildingCommands(building, deltaTime)
+		}
+	}
+}
+
 // processBuildingCommands handles building production and upgrade processing
 func (cp *CommandProcessor) processBuildingCommands(building *GameBuilding, deltaTime time.Duration) {
 	building.mutex.Lock()
